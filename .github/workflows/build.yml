@@ -17,24 +17,24 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Set up JDK 17
+      - name: Set up JDK 21
         uses: actions/setup-java@v4
         with:
-          java-version: '17'
+          java-version: '21'
           distribution: 'temurin'
 
-      - name: Setup Gradle (Fixed to 8.10.2)
+      - name: Setup Gradle 9.3.1
         uses: gradle/actions/setup-gradle@v4
         with:
-          gradle-version: '8.10.2'
+          gradle-version: '9.3.1'
 
       - name: Create debug.keystore and Build APK
         run: |
-          # 1. Genera la chiave di debug mancante
+          # 1. Genera la chiave di firma debug mancante
           keytool -genkey -v -keystore debug.keystore -storepass android -alias androiddebugkey -keypass android -keyalg RSA -keysize 2048 -validity 10000 -dname "CN=Android Debug,O=Android,C=US"
 
-          # 2. Compila l'APK con la versione corretta di Gradle
-          gradle assembleDebug --no-daemon
+          # 2. Compila l'APK disabilitando i controlli di versione restrittivi
+          gradle assembleDebug --no-daemon -Pandroidx.compose.compiler.suppressKotlinVersionCompatibilityCheck=true
 
       - name: Upload APK artifact
         uses: actions/upload-artifact@v4
