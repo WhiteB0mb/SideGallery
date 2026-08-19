@@ -23,25 +23,18 @@ jobs:
           java-version: '17'
           distribution: 'temurin'
 
-      - name: Setup Gradle
+      - name: Setup Gradle (Fixed to 8.10.2)
         uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.10.2'
 
       - name: Create debug.keystore and Build APK
         run: |
-          # 1. Genera automaticamente il file debug.keystore mancante
+          # 1. Genera la chiave di debug mancante
           keytool -genkey -v -keystore debug.keystore -storepass android -alias androiddebugkey -keypass android -keyalg RSA -keysize 2048 -validity 10000 -dname "CN=Android Debug,O=Android,C=US"
 
-          # 2. Cerca ed esegue Gradle disattivando il controllo rigido di versione di Compose
-          GRADLEW_PATH=$(find . -name "gradlew" | head -n 1)
-
-          if [ -n "$GRADLEW_PATH" ]; then
-            DIR=$(dirname "$GRADLEW_PATH")
-            cd "$DIR"
-            chmod +x gradlew
-            ./gradlew assembleDebug --no-daemon -Pandroidx.compose.compiler.suppressKotlinVersionCompatibilityCheck=true
-          else
-            gradle assembleDebug --no-daemon -Pandroidx.compose.compiler.suppressKotlinVersionCompatibilityCheck=true
-          fi
+          # 2. Compila l'APK con la versione corretta di Gradle
+          gradle assembleDebug --no-daemon
 
       - name: Upload APK artifact
         uses: actions/upload-artifact@v4
