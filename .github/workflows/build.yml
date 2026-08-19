@@ -12,8 +12,8 @@ jobs:
     env:
       JAVA_TOOL_OPTIONS: "-Djava.awt.headless=true"
       GRADLE_OPTS: "-Djava.awt.headless=true -Dorg.gradle.daemon=false"
-      STORE_PASSWORD: "mypassword123"
-      KEY_PASSWORD: "mypassword123"
+      STORE_PASSWORD: ${{ secrets.STORE_PASSWORD || 'mypassword123' }}
+      KEY_PASSWORD: ${{ secrets.KEY_PASSWORD || 'mypassword123' }}
 
     steps:
       - name: Checkout repository
@@ -32,8 +32,15 @@ jobs:
 
       - name: Create Release Keystore and Build Release APK
         run: |
-          # 1. Genera la chiave di rilascio my-upload-key.jks con alias "upload"
-          keytool -genkey -v -keystore my-upload-key.jks -storepass mypassword123 -alias upload -keypass mypassword123 -keyalg RSA -keysize 2048 -validity 10000 -dname "CN=Android Release,O=SideGallery,C=US"
+          # 1. Genera la chiave di rilascio
+          keytool -genkey -v -keystore my-upload-key.jks \
+            -storepass "${STORE_PASSWORD}" \
+            -alias upload \
+            -keypass "${KEY_PASSWORD}" \
+            -keyalg RSA \
+            -keysize 2048 \
+            -validity 10000 \
+            -dname "CN=Android Release,O=SideGallery,C=US"
 
           # 2. Compila la versione Release ottimizzata
           gradle assembleRelease --no-daemon -Pandroidx.compose.compiler.suppressKotlinVersionCompatibilityCheck=true
