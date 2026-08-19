@@ -1,4 +1,4 @@
-package com.sidegallery.app
+package com.example
 
 import android.annotation.SuppressLint
 import android.app.NotificationChannel
@@ -54,8 +54,8 @@ import coil.ImageLoader
 import coil.compose.AsyncImage
 import coil.decode.GifDecoder
 import coil.decode.ImageDecoderDecoder
+import com.example.ui.theme.MyApplicationTheme
 import com.sidegallery.app.R
-import com.sidegallery.app.ui.theme.MyApplicationTheme
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
@@ -92,7 +92,6 @@ class OverlayService : Service(), LifecycleOwner, ViewModelStoreOwner, SavedStat
         currentOrientation.value = resources.configuration.orientation
         createNotificationChannel()
         
-        // Uso di ic_launcher (o ic_launcher_foreground) garantito da R
         val notification = NotificationCompat.Builder(this, "sidegallery_channel")
             .setContentTitle("SideGallery is running")
             .setContentText("Sidebar overlay is active")
