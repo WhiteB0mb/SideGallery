@@ -1,4 +1,4 @@
-name: Build Android APK
+name: Build Android Release APK
 
 on:
   push:
@@ -12,6 +12,8 @@ jobs:
     env:
       JAVA_TOOL_OPTIONS: "-Djava.awt.headless=true"
       GRADLE_OPTS: "-Djava.awt.headless=true -Dorg.gradle.daemon=false"
+      STORE_PASSWORD: "mypassword123"
+      KEY_PASSWORD: "mypassword123"
 
     steps:
       - name: Checkout repository
@@ -28,16 +30,16 @@ jobs:
         with:
           gradle-version: '9.3.1'
 
-      - name: Create debug.keystore and Build APK
+      - name: Create Release Keystore and Build Release APK
         run: |
-          # 1. Genera la chiave di firma debug mancante
-          keytool -genkey -v -keystore debug.keystore -storepass android -alias androiddebugkey -keypass android -keyalg RSA -keysize 2048 -validity 10000 -dname "CN=Android Debug,O=Android,C=US"
+          # 1. Genera la chiave di rilascio my-upload-key.jks con alias "upload"
+          keytool -genkey -v -keystore my-upload-key.jks -storepass mypassword123 -alias upload -keypass mypassword123 -keyalg RSA -keysize 2048 -validity 10000 -dname "CN=Android Release,O=SideGallery,C=US"
 
-          # 2. Compila l'APK disabilitando i controlli di versione restrittivi
-          gradle assembleDebug --no-daemon -Pandroidx.compose.compiler.suppressKotlinVersionCompatibilityCheck=true
+          # 2. Compila la versione Release ottimizzata
+          gradle assembleRelease --no-daemon -Pandroidx.compose.compiler.suppressKotlinVersionCompatibilityCheck=true
 
-      - name: Upload APK artifact
+      - name: Upload Release APK artifact
         uses: actions/upload-artifact@v4
         with:
-          name: app-debug-apk
-          path: "**/build/outputs/apk/debug/*.apk"
+          name: app-release-apk
+          path: "**/build/outputs/apk/release/*.apk"
