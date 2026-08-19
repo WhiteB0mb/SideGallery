@@ -9,6 +9,10 @@ jobs:
   build:
     runs-on: ubuntu-latest
 
+    env:
+      JAVA_TOOL_OPTIONS: "-Djava.awt.headless=true"
+      GRADLE_OPTS: "-Djava.awt.headless=true -Dorg.gradle.daemon=false"
+
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -24,18 +28,15 @@ jobs:
 
       - name: Build APK
         run: |
-          # Cerca se esiste gradlew in qualche cartella
           GRADLEW_PATH=$(find . -name "gradlew" | head -n 1)
 
           if [ -n "$GRADLEW_PATH" ]; then
             DIR=$(dirname "$GRADLEW_PATH")
-            echo "Gradlew trovato in: $DIR"
             cd "$DIR"
             chmod +x gradlew
-            ./gradlew assembleDebug
+            ./gradlew assembleDebug --no-daemon
           else
-            echo "Gradlew non presente. Uso Gradle di sistema..."
-            gradle assembleDebug
+            gradle assembleDebug --no-daemon
           fi
 
       - name: Upload APK artifact
