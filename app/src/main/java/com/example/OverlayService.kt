@@ -1,53 +1,51 @@
-package com.example
+package com.sidegallery.app
 
 import android.annotation.SuppressLint
-import kotlinx.coroutines.flow.asStateFlow
-import kotlinx.coroutines.flow.MutableStateFlow
+import android.app.NotificationChannel
+import android.app.NotificationManager
 import android.app.Service
 import android.content.Context
 import android.content.Intent
 import android.content.res.Configuration
 import android.graphics.PixelFormat
+import android.net.Uri
 import android.os.Build
 import android.os.IBinder
 import android.view.Gravity
-import android.view.MotionEvent
 import android.view.View
 import android.view.WindowManager
 import androidx.compose.animation.AnimatedVisibility
-import androidx.compose.animation.core.tween
-import androidx.compose.animation.slideInHorizontally
-import androidx.compose.animation.slideOutHorizontally
+import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.gestures.detectDragGestures
+import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.material3.CircularProgressIndicator
-import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.Surface
-import androidx.compose.material3.Text
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.filled.Image
+import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.ComposeView
 import androidx.compose.ui.unit.dp
-import androidx.lifecycle.Lifecycle
-import androidx.lifecycle.LifecycleOwner
-import androidx.lifecycle.LifecycleRegistry
-import androidx.lifecycle.ViewModelProvider
-import androidx.lifecycle.ViewModelStore
-import androidx.lifecycle.ViewModelStoreOwner
-import androidx.lifecycle.setViewTreeLifecycleOwner
-import androidx.lifecycle.setViewTreeViewModelStoreOwner
+import androidx.core.app.NotificationCompat
+import androidx.lifecycle.*
 import androidx.savedstate.SavedStateRegistry
 import androidx.savedstate.SavedStateRegistryController
 import androidx.savedstate.SavedStateRegistryOwner
@@ -56,27 +54,11 @@ import coil.ImageLoader
 import coil.compose.AsyncImage
 import coil.decode.GifDecoder
 import coil.decode.ImageDecoderDecoder
-import com.example.ui.theme.MyApplicationTheme
+import com.sidegallery.app.R
+import com.sidegallery.app.ui.theme.MyApplicationTheme
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
-
-import android.app.NotificationChannel
-import android.app.NotificationManager
-import androidx.core.app.NotificationCompat
-
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Image
-import androidx.compose.material3.Icon
-import androidx.compose.foundation.shape.CircleShape
-import androidx.compose.ui.draw.alpha
-import androidx.compose.foundation.gestures.detectDragGestures
-import androidx.compose.foundation.ExperimentalFoundationApi
-import androidx.compose.foundation.combinedClickable
-import androidx.compose.material.icons.filled.Delete
-import android.net.Uri
-
-import androidx.compose.material.icons.filled.Close
-import androidx.compose.material.icons.filled.Add
-import androidx.compose.material3.IconButton
 
 class OverlayService : Service(), LifecycleOwner, ViewModelStoreOwner, SavedStateRegistryOwner {
 
@@ -90,7 +72,6 @@ class OverlayService : Service(), LifecycleOwner, ViewModelStoreOwner, SavedStat
     private lateinit var windowManager: WindowManager
     private lateinit var composeView: ComposeView
     
-    // Lifecycle setup for Compose inside WindowManager
     private val lifecycleRegistry = LifecycleRegistry(this)
     private val store = ViewModelStore()
     private val savedStateRegistryController = SavedStateRegistryController.create(this)
@@ -110,11 +91,14 @@ class OverlayService : Service(), LifecycleOwner, ViewModelStoreOwner, SavedStat
         _isRunning.value = true
         currentOrientation.value = resources.configuration.orientation
         createNotificationChannel()
+        
+        // Uso di ic_launcher (o ic_launcher_foreground) garantito da R
         val notification = NotificationCompat.Builder(this, "sidegallery_channel")
             .setContentTitle("SideGallery is running")
             .setContentText("Sidebar overlay is active")
-            .setSmallIcon(R.drawable.ic_launcher_foreground)
+            .setSmallIcon(R.drawable.ic_launcher)
             .build()
+            
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
             startForeground(1, notification, android.content.pm.ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE)
         } else {
@@ -153,13 +137,12 @@ class OverlayService : Service(), LifecycleOwner, ViewModelStoreOwner, SavedStat
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
-        // Trigger a reload in case settings changed while service was running
         viewModel.loadImages()
         return START_STICKY
     }
 
     private var windowX = 0
-    private var windowY = 100 // default y offset
+    private var windowY = 100
 
     @SuppressLint("ClickableViewAccessibility")
     private fun setupOverlay() {
@@ -203,7 +186,7 @@ class OverlayService : Service(), LifecycleOwner, ViewModelStoreOwner, SavedStat
                 val darkTheme = when (themeMode) {
                     ThemeMode.LIGHT -> false
                     ThemeMode.DARK -> true
-                    ThemeMode.SYSTEM -> androidx.compose.foundation.isSystemInDarkTheme()
+                    ThemeMode.SYSTEM -> isSystemInDarkTheme()
                 }
 
                 val currentOri by currentOrientation.collectAsState()
@@ -213,9 +196,7 @@ class OverlayService : Service(), LifecycleOwner, ViewModelStoreOwner, SavedStat
                         viewModel = viewModel, 
                         imageLoader = imageLoader, 
                         orientation = currentOri,
-                        onUpdateGravity = { side ->
-                            // Optional legacy support if needed
-                        },
+                        onUpdateGravity = {},
                         onUpdateWindowParams = { expanded, triggerType, panelSide, shouldHide ->
                             if (shouldHide) {
                                 composeView.visibility = View.GONE
@@ -325,7 +306,6 @@ fun OverlayContent(
         onUpdateWindowParams(expanded, triggerType, panelSide, shouldHide)
     }
 
-    // Auto-dismiss delete confirmation after 3 seconds of inactivity
     LaunchedEffect(itemToDelete) {
         if (itemToDelete != null) {
             kotlinx.coroutines.delay(3000)
@@ -356,7 +336,6 @@ fun OverlayContent(
     }
     
     val expandedWidthDp = (context.resources.displayMetrics.widthPixels / context.resources.displayMetrics.density / widthFraction).dp
-    
     val isEdgeSwipe = triggerType == TriggerType.EDGE_SWIPE
 
     var baseModifier = if (expanded) {
@@ -492,7 +471,7 @@ fun OverlayContent(
                     ) {
                         IconButton(onClick = {
                             val intent = Intent(context, MainActivity::class.java).apply {
-                                action = "com.example.ACTION_OPEN_PICKER"
+                                action = "com.sidegallery.app.ACTION_OPEN_PICKER"
                                 flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP
                             }
                             context.startActivity(intent)
@@ -533,7 +512,7 @@ fun OverlayContent(
                                                 } else {
                                                     haptic.performHapticFeedback(androidx.compose.ui.hapticfeedback.HapticFeedbackType.LongPress)
                                                     scope.launch {
-                                                        toggleExpand(false) // Close sidebar
+                                                        toggleExpand(false)
                                                         ClipboardUtils.copyImageToClipboard(context, item.uri)
                                                     }
                                                 }
@@ -574,4 +553,3 @@ fun OverlayContent(
         }
     }
 }
-
