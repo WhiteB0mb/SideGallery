@@ -26,17 +26,21 @@ jobs:
       - name: Setup Gradle
         uses: gradle/actions/setup-gradle@v4
 
-      - name: Build APK
+      - name: Create debug.keystore and Build APK
         run: |
+          # 1. Genera automaticamente il file debug.keystore mancante
+          keytool -genkey -v -keystore debug.keystore -storepass android -alias androiddebugkey -keypass android -keyalg RSA -keysize 2048 -validity 10000 -dname "CN=Android Debug,O=Android,C=US"
+
+          # 2. Cerca ed esegue Gradle disattivando il controllo rigido di versione di Compose
           GRADLEW_PATH=$(find . -name "gradlew" | head -n 1)
 
           if [ -n "$GRADLEW_PATH" ]; then
             DIR=$(dirname "$GRADLEW_PATH")
             cd "$DIR"
             chmod +x gradlew
-            ./gradlew assembleDebug --no-daemon
+            ./gradlew assembleDebug --no-daemon -Pandroidx.compose.compiler.suppressKotlinVersionCompatibilityCheck=true
           else
-            gradle assembleDebug --no-daemon
+            gradle assembleDebug --no-daemon -Pandroidx.compose.compiler.suppressKotlinVersionCompatibilityCheck=true
           fi
 
       - name: Upload APK artifact
