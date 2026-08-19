@@ -30,6 +30,7 @@ enum class SortOption {
 enum class TriggerType { EDGE_SWIPE, FLOATING_BUTTON }
 enum class PanelSide { LEFT, RIGHT }
 enum class PanelWidth { THIRD, HALF, TWO_THIRDS }
+enum class ThemeMode { SYSTEM, LIGHT, DARK }
 
 class MainViewModel(application: Application) : AndroidViewModel(application) {
 
@@ -37,6 +38,12 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     private val _selectedFolderUri = MutableStateFlow<Uri?>(null)
     val selectedFolderUri: StateFlow<Uri?> = _selectedFolderUri.asStateFlow()
+
+    private val _themeMode = MutableStateFlow(ThemeMode.SYSTEM)
+    val themeMode: StateFlow<ThemeMode> = _themeMode.asStateFlow()
+
+    private val _hideInLandscape = MutableStateFlow(false)
+    val hideInLandscape: StateFlow<Boolean> = _hideInLandscape.asStateFlow()
 
     private val _images = MutableStateFlow<List<GalleryItem>>(emptyList())
     val images: StateFlow<List<GalleryItem>> = _images.asStateFlow()
@@ -64,6 +71,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         if (key == "trigger_type") _triggerType.value = TriggerType.valueOf(sharedPreferences.getString("trigger_type", TriggerType.EDGE_SWIPE.name) ?: TriggerType.EDGE_SWIPE.name)
         if (key == "panel_side") _panelSide.value = PanelSide.valueOf(sharedPreferences.getString("panel_side", PanelSide.RIGHT.name) ?: PanelSide.RIGHT.name)
         if (key == "panel_width") _panelWidth.value = PanelWidth.valueOf(sharedPreferences.getString("panel_width", PanelWidth.THIRD.name) ?: PanelWidth.THIRD.name)
+        if (key == "theme_mode") _themeMode.value = ThemeMode.valueOf(sharedPreferences.getString("theme_mode", ThemeMode.SYSTEM.name) ?: ThemeMode.SYSTEM.name)
+        if (key == "hide_in_landscape") _hideInLandscape.value = sharedPreferences.getBoolean("hide_in_landscape", false)
         if (key == "folder_uri") {
             val uriStr = sharedPreferences.getString("folder_uri", null)
             if (uriStr != null) {
@@ -87,6 +96,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         _triggerType.value = TriggerType.valueOf(prefs.getString("trigger_type", TriggerType.EDGE_SWIPE.name) ?: TriggerType.EDGE_SWIPE.name)
         _panelSide.value = PanelSide.valueOf(prefs.getString("panel_side", PanelSide.RIGHT.name) ?: PanelSide.RIGHT.name)
         _panelWidth.value = PanelWidth.valueOf(prefs.getString("panel_width", PanelWidth.THIRD.name) ?: PanelWidth.THIRD.name)
+        _themeMode.value = ThemeMode.valueOf(prefs.getString("theme_mode", ThemeMode.SYSTEM.name) ?: ThemeMode.SYSTEM.name)
+        _hideInLandscape.value = prefs.getBoolean("hide_in_landscape", false)
 
         prefs.registerOnSharedPreferenceChangeListener(prefsListener)
 
@@ -98,6 +109,14 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     override fun onCleared() {
         super.onCleared()
         prefs.unregisterOnSharedPreferenceChangeListener(prefsListener)
+    }
+
+    fun setHideInLandscape(hide: Boolean) {
+        prefs.edit().putBoolean("hide_in_landscape", hide).apply()
+    }
+
+    fun setThemeMode(mode: ThemeMode) {
+        prefs.edit().putString("theme_mode", mode.name).apply()
     }
 
     fun setGridColumns(columns: Int) {
@@ -164,6 +183,55 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             _images.value = loadedImages
             applySorting()
             _isLoading.value = false
+        }
+    }
+
+    fun importImages(context: Context, uris: List<Uri>) {
+        val folderUri = _selectedFolderUri.value ?: return
+        _isLoading.value = true
+        viewModelScope.launch {
+            withContext(Dispatchers.IO) {
+                val folder = DocumentFile.fromTreeUri(context, folderUri) ?: return@withContext
+                for (uri in uris) {
+                    try {
+                        val mimeType = context.contentResolver.getType(uri) ?: "image/jpeg"
+                        val ext = when {
+                            mimeType.contains("gif") -> "gif"
+                            mimeType.contains("png") -> "png"
+                            mimeType.contains("webp") -> "webp"
+                            else -> "jpg"
+                        }
+                        val fileName = "imported_${System.currentTimeMillis()}.$ext"
+                        val newFile = folder.createFile(mimeType, fileName)
+                        if (newFile != null) {
+                            context.contentResolver.openInputStream(uri)?.use { input ->
+                                context.contentResolver.openOutputStream(newFile.uri)?.use { output ->
+                                    input.copyTo(output)
+                                }
+                            }
+                        }
+                    } catch (e: Exception) {
+                        e.printStackTrace()
+                    }
+                }
+            }
+            loadImages()
+        }
+    }
+
+    fun deleteImage(context: Context, uri: Uri) {
+        viewModelScope.launch {
+            withContext(Dispatchers.IO) {
+                try {
+                    val file = DocumentFile.fromSingleUri(context, uri)
+                    if (file != null && file.exists()) {
+                        file.delete()
+                    }
+                } catch (e: Exception) {
+                    e.printStackTrace()
+                }
+            }
+            loadImages()
         }
     }
 

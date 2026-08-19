@@ -39,8 +39,27 @@ class MainActivity : ComponentActivity() {
         }
     }
 
+    private val mediaPicker = registerForActivityResult(ActivityResultContracts.PickMultipleVisualMedia()) { uris ->
+        if (uris.isNotEmpty()) {
+            viewModel.importImages(this, uris)
+            Toast.makeText(this, "Importing ${uris.size} files...", Toast.LENGTH_SHORT).show()
+        }
+    }
+
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        handleIntent(intent)
+    }
+
+    private fun handleIntent(intent: Intent?) {
+        if (intent?.action == "com.example.ACTION_OPEN_PICKER") {
+            mediaPicker.launch(androidx.activity.result.PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageAndVideo))
+        }
+    }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        handleIntent(intent)
         enableEdgeToEdge()
         setContent {
             MyApplicationTheme {
@@ -58,6 +77,7 @@ class MainActivity : ComponentActivity() {
                             startActivity(intent)
                         },
                         onPickFolder = { folderPicker.launch(null) },
+                        onPickMedia = { mediaPicker.launch(androidx.activity.result.PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageAndVideo)) },
                         onToggleService = { start ->
                             val intent = Intent(this, OverlayService::class.java)
                             if (start) {
@@ -88,6 +108,7 @@ fun MainScreen(
     modifier: Modifier = Modifier,
     onRequestOverlayPermission: () -> Unit,
     onPickFolder: () -> Unit,
+    onPickMedia: () -> Unit,
     onToggleService: (Boolean) -> Unit,
     canDrawOverlays: Boolean,
     onCheckPermission: () -> Unit
@@ -98,8 +119,10 @@ fun MainScreen(
     val triggerType by viewModel.triggerType.collectAsState()
     val panelSide by viewModel.panelSide.collectAsState()
     val panelWidth by viewModel.panelWidth.collectAsState()
+    val isLoading by viewModel.isLoading.collectAsState()
 
-    var isServiceRunning by remember { mutableStateOf(false) }
+    val isServiceRunning by OverlayService.isRunning.collectAsState()
+    var isIgnoringBatteryOptimizations by remember { mutableStateOf(true) }
     val context = androidx.compose.ui.platform.LocalContext.current
 
     val lifecycleOwner = LocalLifecycleOwner.current
@@ -107,6 +130,10 @@ fun MainScreen(
         val observer = LifecycleEventObserver { _, event ->
             if (event == Lifecycle.Event.ON_RESUME) {
                 onCheckPermission()
+                val pm = context.getSystemService(Context.POWER_SERVICE) as PowerManager
+                isIgnoringBatteryOptimizations = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+                    pm.isIgnoringBatteryOptimizations(context.packageName)
+                } else true
             }
         }
         lifecycleOwner.lifecycle.addObserver(observer)
@@ -126,13 +153,23 @@ fun MainScreen(
 
         Card(modifier = Modifier.fillMaxWidth()) {
             Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                Text("1. Folder Selection", style = MaterialTheme.typography.titleMedium)
+                Text("1. Folder & Media", style = MaterialTheme.typography.titleMedium)
                 Text(
                     text = if (selectedFolderUri != null) "Selected: $selectedFolderUri" else "No folder selected",
                     style = MaterialTheme.typography.bodyMedium
                 )
-                Button(onClick = onPickFolder) {
-                    Text("Select Image Folder")
+                Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Button(onClick = onPickFolder, modifier = Modifier.weight(1f)) {
+                        Text("Select / Create Folder")
+                    }
+                }
+                if (selectedFolderUri != null) {
+                    Button(onClick = onPickMedia, modifier = Modifier.fillMaxWidth(), colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.secondary)) {
+                        Text("Add / Import Images (+)")
+                    }
+                    if (isLoading) {
+                        LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
+                    }
                 }
             }
         }
@@ -228,6 +265,38 @@ fun MainScreen(
                         label = { Text("Floating Button") }
                     )
                 }
+
+                // Theme Mode
+                val themeMode by viewModel.themeMode.collectAsState()
+                Text("Overlay Theme", style = MaterialTheme.typography.bodyMedium)
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    FilterChip(
+                        selected = themeMode == ThemeMode.SYSTEM,
+                        onClick = { viewModel.setThemeMode(ThemeMode.SYSTEM) },
+                        label = { Text("System") }
+                    )
+                    FilterChip(
+                        selected = themeMode == ThemeMode.LIGHT,
+                        onClick = { viewModel.setThemeMode(ThemeMode.LIGHT) },
+                        label = { Text("Light") }
+                    )
+                    FilterChip(
+                        selected = themeMode == ThemeMode.DARK,
+                        onClick = { viewModel.setThemeMode(ThemeMode.DARK) },
+                        label = { Text("Dark") }
+                    )
+                }
+
+                // Hide in Landscape
+                val hideInLandscape by viewModel.hideInLandscape.collectAsState()
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text("Auto-hide in landscape")
+                    Spacer(modifier = Modifier.weight(1f))
+                    Switch(
+                        checked = hideInLandscape,
+                        onCheckedChange = { viewModel.setHideInLandscape(it) }
+                    )
+                }
             }
         }
 
@@ -244,18 +313,15 @@ fun MainScreen(
                     }
                 }
                 
-                val pm = context.getSystemService(Context.POWER_SERVICE) as PowerManager
-                val isIgnoringBatteryOptimizations = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
-                    pm.isIgnoringBatteryOptimizations(context.packageName)
-                } else true
-                
                 if (isIgnoringBatteryOptimizations) {
                     Text("Battery Optimization: Unrestricted (Optimal)", color = MaterialTheme.colorScheme.primary)
                 } else {
                     Text("Battery Optimization is restricted. The service might be killed by the system.", color = MaterialTheme.colorScheme.error)
                     if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
                         Button(onClick = {
-                            val intent = Intent(Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS)
+                            val intent = Intent(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS).apply {
+                                data = Uri.parse("package:${context.packageName}")
+                            }
                             context.startActivity(intent)
                         }) {
                             Text("Disable Restrictions")
@@ -274,7 +340,6 @@ fun MainScreen(
                     Switch(
                         checked = isServiceRunning,
                         onCheckedChange = {
-                            isServiceRunning = it
                             onToggleService(it)
                         },
                         enabled = canDrawOverlays && selectedFolderUri != null

@@ -1,9 +1,12 @@
 package com.example
 
 import android.annotation.SuppressLint
+import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.MutableStateFlow
 import android.app.Service
 import android.content.Context
 import android.content.Intent
+import android.content.res.Configuration
 import android.graphics.PixelFormat
 import android.os.Build
 import android.os.IBinder
@@ -64,12 +67,25 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Image
 import androidx.compose.material3.Icon
 import androidx.compose.foundation.shape.CircleShape
-import androidx.compose.ui.unit.IntOffset
+import androidx.compose.ui.draw.alpha
+import androidx.compose.foundation.gestures.detectDragGestures
+import androidx.compose.foundation.ExperimentalFoundationApi
+import androidx.compose.foundation.combinedClickable
+import androidx.compose.material.icons.filled.Delete
+import android.net.Uri
 
 import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.Add
 import androidx.compose.material3.IconButton
 
 class OverlayService : Service(), LifecycleOwner, ViewModelStoreOwner, SavedStateRegistryOwner {
+
+    companion object {
+        private val _isRunning = MutableStateFlow(false)
+        val isRunning: kotlinx.coroutines.flow.StateFlow<Boolean> = _isRunning.asStateFlow()
+    }
+
+    private val currentOrientation = MutableStateFlow(Configuration.ORIENTATION_PORTRAIT)
 
     private lateinit var windowManager: WindowManager
     private lateinit var composeView: ComposeView
@@ -91,6 +107,8 @@ class OverlayService : Service(), LifecycleOwner, ViewModelStoreOwner, SavedStat
 
     override fun onCreate() {
         super.onCreate()
+        _isRunning.value = true
+        currentOrientation.value = resources.configuration.orientation
         createNotificationChannel()
         val notification = NotificationCompat.Builder(this, "sidegallery_channel")
             .setContentTitle("SideGallery is running")
@@ -115,6 +133,11 @@ class OverlayService : Service(), LifecycleOwner, ViewModelStoreOwner, SavedStat
         setupOverlay()
         lifecycleRegistry.handleLifecycleEvent(Lifecycle.Event.ON_START)
         lifecycleRegistry.handleLifecycleEvent(Lifecycle.Event.ON_RESUME)
+    }
+
+    override fun onConfigurationChanged(newConfig: Configuration) {
+        super.onConfigurationChanged(newConfig)
+        currentOrientation.value = newConfig.orientation
     }
 
     private fun createNotificationChannel() {
@@ -168,46 +191,66 @@ class OverlayService : Service(), LifecycleOwner, ViewModelStoreOwner, SavedStat
                         add(GifDecoder.Factory())
                     }
                 }
+                .memoryCache {
+                    coil.memory.MemoryCache.Builder(context)
+                        .maxSizePercent(0.15)
+                        .build()
+                }
                 .build()
 
             setContent {
-                MyApplicationTheme {
+                val themeMode by viewModel.themeMode.collectAsState()
+                val darkTheme = when (themeMode) {
+                    ThemeMode.LIGHT -> false
+                    ThemeMode.DARK -> true
+                    ThemeMode.SYSTEM -> androidx.compose.foundation.isSystemInDarkTheme()
+                }
+
+                val currentOri by currentOrientation.collectAsState()
+
+                MyApplicationTheme(darkTheme = darkTheme) {
                     OverlayContent(
                         viewModel = viewModel, 
                         imageLoader = imageLoader, 
+                        orientation = currentOri,
                         onUpdateGravity = { side ->
-                            val newGravity = if (side == PanelSide.LEFT) Gravity.START or Gravity.TOP else Gravity.END or Gravity.TOP
-                            if (layoutParams.gravity != newGravity) {
-                                layoutParams.gravity = newGravity
-                                try { windowManager.updateViewLayout(this@apply, layoutParams) } catch (e: Exception) {}
-                            }
+                            // Optional legacy support if needed
                         },
-                        onUpdateWindowParams = { expanded, triggerType ->
-                            if (expanded) {
-                                layoutParams.width = WindowManager.LayoutParams.WRAP_CONTENT
-                                layoutParams.height = WindowManager.LayoutParams.MATCH_PARENT
-                                layoutParams.x = 0
-                                layoutParams.y = 0
-                            } else if (triggerType == TriggerType.FLOATING_BUTTON) {
-                                layoutParams.width = WindowManager.LayoutParams.WRAP_CONTENT
-                                layoutParams.height = WindowManager.LayoutParams.WRAP_CONTENT
-                                layoutParams.x = windowX
-                                layoutParams.y = windowY
+                        onUpdateWindowParams = { expanded, triggerType, panelSide, shouldHide ->
+                            if (shouldHide) {
+                                composeView.visibility = View.GONE
+                                layoutParams.width = 0
+                                layoutParams.height = 0
+                                layoutParams.flags = layoutParams.flags or WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE
                             } else {
-                                layoutParams.width = WindowManager.LayoutParams.WRAP_CONTENT
-                                layoutParams.height = WindowManager.LayoutParams.MATCH_PARENT
-                                layoutParams.x = 0
-                                layoutParams.y = 0
+                                composeView.visibility = View.VISIBLE
+                                layoutParams.flags = layoutParams.flags and (WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE.inv())
+                                if (expanded) {
+                                    layoutParams.gravity = Gravity.START or Gravity.TOP
+                                    layoutParams.width = WindowManager.LayoutParams.MATCH_PARENT
+                                    layoutParams.height = WindowManager.LayoutParams.MATCH_PARENT
+                                    layoutParams.x = 0
+                                    layoutParams.y = 0
+                                } else {
+                                    if (triggerType == TriggerType.FLOATING_BUTTON) {
+                                        layoutParams.gravity = Gravity.START or Gravity.TOP
+                                        layoutParams.width = WindowManager.LayoutParams.WRAP_CONTENT
+                                        layoutParams.height = WindowManager.LayoutParams.WRAP_CONTENT
+                                        layoutParams.x = windowX
+                                        layoutParams.y = windowY
+                                    } else {
+                                        layoutParams.gravity = if (panelSide == PanelSide.LEFT) Gravity.START or Gravity.TOP else Gravity.END or Gravity.TOP
+                                        layoutParams.width = (24 * resources.displayMetrics.density).toInt()
+                                        layoutParams.height = WindowManager.LayoutParams.MATCH_PARENT
+                                        layoutParams.x = 0
+                                        layoutParams.y = 0
+                                    }
+                                }
                             }
                             try { windowManager.updateViewLayout(this@apply, layoutParams) } catch (e: Exception) {}
                         },
                         onDragBubble = { dx, dy ->
-                            val gravityStart = layoutParams.gravity and Gravity.START == Gravity.START
-                            if (gravityStart) {
-                                windowX += dx.toInt()
-                            } else {
-                                windowX -= dx.toInt()
-                            }
+                            windowX += dx.toInt()
                             windowY += dy.toInt()
                             layoutParams.x = windowX
                             layoutParams.y = windowY
@@ -234,6 +277,7 @@ class OverlayService : Service(), LifecycleOwner, ViewModelStoreOwner, SavedStat
 
     override fun onDestroy() {
         super.onDestroy()
+        _isRunning.value = false
         lifecycleRegistry.handleLifecycleEvent(Lifecycle.Event.ON_DESTROY)
         store.clear()
         if (isOverlayAdded) {
@@ -245,16 +289,19 @@ class OverlayService : Service(), LifecycleOwner, ViewModelStoreOwner, SavedStat
     override fun onBind(intent: Intent?): IBinder? = null
 }
 
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
 fun OverlayContent(
     viewModel: MainViewModel, 
     imageLoader: ImageLoader, 
+    orientation: Int,
     onUpdateGravity: (PanelSide) -> Unit,
-    onUpdateWindowParams: (Boolean, TriggerType) -> Unit,
+    onUpdateWindowParams: (Boolean, TriggerType, PanelSide, Boolean) -> Unit,
     onDragBubble: (Float, Float) -> Boolean,
     onCloseService: () -> Unit
 ) {
     var expanded by remember { mutableStateOf(false) }
+    var itemToDelete by remember { mutableStateOf<Uri?>(null) }
     val scope = rememberCoroutineScope()
     val context = androidx.compose.ui.platform.LocalContext.current
     
@@ -262,16 +309,45 @@ fun OverlayContent(
     val panelSide by viewModel.panelSide.collectAsState()
     val panelWidthState by viewModel.panelWidth.collectAsState()
     val triggerType by viewModel.triggerType.collectAsState()
+    val hideInLandscape by viewModel.hideInLandscape.collectAsState()
 
     var isNearBottom by remember { mutableStateOf(false) }
 
-    LaunchedEffect(panelSide) {
-        onUpdateGravity(panelSide)
+    val isLandscape = orientation == Configuration.ORIENTATION_LANDSCAPE
+    val shouldHide = isLandscape && hideInLandscape && !expanded
+
+    fun toggleExpand(expand: Boolean) {
+        onUpdateWindowParams(expand, triggerType, panelSide, shouldHide)
+        expanded = expand
     }
 
-    LaunchedEffect(expanded, triggerType) {
-        onUpdateWindowParams(expanded, triggerType)
+    LaunchedEffect(expanded, triggerType, panelSide, shouldHide) {
+        onUpdateWindowParams(expanded, triggerType, panelSide, shouldHide)
     }
+
+    // Auto-dismiss delete confirmation after 3 seconds of inactivity
+    LaunchedEffect(itemToDelete) {
+        if (itemToDelete != null) {
+            kotlinx.coroutines.delay(3000)
+            itemToDelete = null
+        }
+    }
+
+    var isIdle by remember { mutableStateOf(false) }
+    var lastInteractionTime by remember { mutableStateOf(System.currentTimeMillis()) }
+
+    LaunchedEffect(lastInteractionTime, expanded) {
+        if (!expanded) {
+            kotlinx.coroutines.delay(3000)
+            isIdle = true
+        } else {
+            isIdle = false
+        }
+    }
+
+    val bubbleAlpha by androidx.compose.animation.core.animateFloatAsState(targetValue = if (isIdle && !expanded) 0.35f else 1.0f)
+
+    if (shouldHide) return
 
     val widthFraction = when (panelWidthState) {
         PanelWidth.THIRD -> 3f
@@ -284,34 +360,54 @@ fun OverlayContent(
     val isEdgeSwipe = triggerType == TriggerType.EDGE_SWIPE
 
     var baseModifier = if (expanded) {
-        Modifier.fillMaxHeight().width(expandedWidthDp)
+        Modifier.fillMaxSize()
     } else if (isEdgeSwipe) {
-        Modifier.fillMaxHeight().width(10.dp)
+        Modifier.fillMaxSize()
     } else {
-        Modifier.wrapContentSize()
+        Modifier.wrapContentSize().alpha(bubbleAlpha)
     }
 
     baseModifier = baseModifier.background(Color.Transparent)
 
+    if (expanded) {
+        baseModifier = baseModifier.clickable(
+            interactionSource = remember { androidx.compose.foundation.interaction.MutableInteractionSource() },
+            indication = null
+        ) {
+            if (itemToDelete != null) {
+                itemToDelete = null
+            } else {
+                toggleExpand(false)
+            }
+        }
+    }
+
     if (expanded || isEdgeSwipe) {
         baseModifier = baseModifier.pointerInput(expanded, panelSide) {
-            detectDragGestures { change, dragAmount ->
+            detectDragGestures(
+                onDragStart = { 
+                    lastInteractionTime = System.currentTimeMillis()
+                    isIdle = false 
+                }
+            ) { change, dragAmount ->
                 if (!expanded) {
-                    val isOpening = if (panelSide == PanelSide.LEFT) dragAmount.x > 10 else dragAmount.x < -10
+                    val isOpening = if (panelSide == PanelSide.LEFT) dragAmount.x > 5 else dragAmount.x < -5
                     if (isOpening) {
-                        expanded = true
+                        toggleExpand(true)
                         change.consume()
                     }
                 } else {
-                    val isClosing = if (panelSide == PanelSide.LEFT) dragAmount.x < -10 else dragAmount.x > 10
+                    val isClosing = if (panelSide == PanelSide.LEFT) dragAmount.x < -5 else dragAmount.x > 5
                     if (isClosing) {
-                        expanded = false
+                        toggleExpand(false)
                         change.consume()
                     }
                 }
             }
         }
     }
+
+    val haptic = androidx.compose.ui.platform.LocalHapticFeedback.current
 
     Box(modifier = baseModifier) {
         if (!expanded) {
@@ -324,6 +420,10 @@ fun OverlayContent(
                         .background(if (isNearBottom) MaterialTheme.colorScheme.error.copy(alpha = 0.8f) else MaterialTheme.colorScheme.primary.copy(alpha = 0.8f))
                         .pointerInput(Unit) {
                             detectDragGestures(
+                                onDragStart = { 
+                                    lastInteractionTime = System.currentTimeMillis()
+                                    isIdle = false 
+                                },
                                 onDragEnd = {
                                     if (isNearBottom) {
                                         onCloseService()
@@ -335,7 +435,11 @@ fun OverlayContent(
                                 isNearBottom = onDragBubble(dragAmount.x, dragAmount.y)
                             }
                         }
-                        .clickable { expanded = true },
+                        .clickable { 
+                            lastInteractionTime = System.currentTimeMillis()
+                            isIdle = false
+                            toggleExpand(true) 
+                        },
                     contentAlignment = Alignment.Center
                 ) {
                     if (isNearBottom) {
@@ -357,14 +461,25 @@ fun OverlayContent(
             // Expanded Sidebar
             Surface(
                 modifier = Modifier
-                    .fillMaxSize()
+                    .fillMaxHeight()
+                    .width(expandedWidthDp)
+                    .align(if (panelSide == PanelSide.LEFT) Alignment.CenterStart else Alignment.CenterEnd)
                     .border(
                         1.dp, 
                         MaterialTheme.colorScheme.outline.copy(alpha = 0.5f), 
                         if (panelSide == PanelSide.LEFT) RoundedCornerShape(topEnd = 16.dp, bottomEnd = 16.dp) else RoundedCornerShape(topStart = 16.dp, bottomStart = 16.dp)
                     )
-                    .clip(if (panelSide == PanelSide.LEFT) RoundedCornerShape(topEnd = 16.dp, bottomEnd = 16.dp) else RoundedCornerShape(topStart = 16.dp, bottomStart = 16.dp)),
-                color = MaterialTheme.colorScheme.surface.copy(alpha = 0.95f)
+                    .clip(if (panelSide == PanelSide.LEFT) RoundedCornerShape(topEnd = 16.dp, bottomEnd = 16.dp) else RoundedCornerShape(topStart = 16.dp, bottomStart = 16.dp))
+                    .clickable(
+                        interactionSource = remember { androidx.compose.foundation.interaction.MutableInteractionSource() },
+                        indication = null
+                    ) { 
+                        if (itemToDelete != null) {
+                            itemToDelete = null
+                        }
+                    },
+                color = MaterialTheme.colorScheme.surface.copy(alpha = 0.95f),
+                contentColor = MaterialTheme.colorScheme.onSurface
             ) {
                 val images by viewModel.images.collectAsState()
                 val isLoading by viewModel.isLoading.collectAsState()
@@ -372,26 +487,31 @@ fun OverlayContent(
                 Column(modifier = Modifier.fillMaxSize()) {
                     Row(
                         modifier = Modifier.fillMaxWidth().padding(8.dp),
-                        horizontalArrangement = Arrangement.SpaceBetween,
+                        horizontalArrangement = Arrangement.End,
                         verticalAlignment = Alignment.CenterVertically
                     ) {
-                        Text(
-                            "SideGallery", 
-                            style = MaterialTheme.typography.titleMedium,
-                            modifier = Modifier.padding(start = 8.dp)
-                        )
-                        IconButton(onClick = onCloseService) {
-                            Icon(imageVector = Icons.Default.Close, contentDescription = "Close App")
+                        IconButton(onClick = {
+                            val intent = Intent(context, MainActivity::class.java).apply {
+                                action = "com.example.ACTION_OPEN_PICKER"
+                                flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP
+                            }
+                            context.startActivity(intent)
+                            toggleExpand(false)
+                        }) {
+                            Icon(imageVector = Icons.Default.Add, contentDescription = "Add Media", tint = MaterialTheme.colorScheme.onSurface)
+                        }
+                        IconButton(onClick = { toggleExpand(false) }) {
+                            Icon(imageVector = Icons.Default.Close, contentDescription = "Close Sidebar", tint = MaterialTheme.colorScheme.onSurface)
                         }
                     }
 
                     if (isLoading) {
                         Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                            CircularProgressIndicator()
+                            CircularProgressIndicator(color = MaterialTheme.colorScheme.primary)
                         }
                     } else if (images.isEmpty()) {
                         Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                            Text("No images found", style = MaterialTheme.typography.bodySmall)
+                            Text("No images found", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurface)
                         }
                     } else {
                         LazyVerticalGrid(
@@ -400,23 +520,52 @@ fun OverlayContent(
                             modifier = Modifier.fillMaxSize()
                         ) {
                             items(images, key = { it.uri.toString() }) { item ->
-                                AsyncImage(
-                                    model = item.uri,
-                                    imageLoader = imageLoader,
-                                    contentDescription = item.name,
-                                    contentScale = ContentScale.Crop,
+                                Box(
                                     modifier = Modifier
                                         .padding(4.dp)
                                         .aspectRatio(1f)
                                         .clip(RoundedCornerShape(8.dp))
                                         .background(Color.Gray.copy(alpha = 0.3f))
-                                        .clickable {
-                                            scope.launch {
-                                                expanded = false // Close sidebar
-                                                ClipboardUtils.copyImageToClipboard(context, item.uri)
+                                        .combinedClickable(
+                                            onClick = {
+                                                if (itemToDelete != null) {
+                                                    itemToDelete = null
+                                                } else {
+                                                    haptic.performHapticFeedback(androidx.compose.ui.hapticfeedback.HapticFeedbackType.LongPress)
+                                                    scope.launch {
+                                                        toggleExpand(false) // Close sidebar
+                                                        ClipboardUtils.copyImageToClipboard(context, item.uri)
+                                                    }
+                                                }
+                                            },
+                                            onLongClick = {
+                                                haptic.performHapticFeedback(androidx.compose.ui.hapticfeedback.HapticFeedbackType.LongPress)
+                                                itemToDelete = item.uri
                                             }
+                                        )
+                                ) {
+                                    AsyncImage(
+                                        model = item.uri,
+                                        imageLoader = imageLoader,
+                                        contentDescription = item.name,
+                                        contentScale = ContentScale.Crop,
+                                        modifier = Modifier.fillMaxSize()
+                                    )
+                                    if (itemToDelete == item.uri) {
+                                        Box(
+                                            modifier = Modifier
+                                                .fillMaxSize()
+                                                .background(Color.Black.copy(alpha = 0.7f))
+                                                .clickable {
+                                                    viewModel.deleteImage(context, item.uri)
+                                                    itemToDelete = null
+                                                },
+                                            contentAlignment = Alignment.Center
+                                        ) {
+                                            Icon(imageVector = Icons.Default.Delete, contentDescription = "Delete", tint = Color.Red, modifier = Modifier.size(36.dp))
                                         }
-                                )
+                                    }
+                                }
                             }
                         }
                     }
@@ -425,3 +574,4 @@ fun OverlayContent(
         }
     }
 }
+
