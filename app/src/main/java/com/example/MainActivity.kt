@@ -280,6 +280,27 @@ fun MainScreen(
                         enabled = canDrawOverlays && selectedFolderUri != null
                     )
                 }
+                
+                if (isServiceRunning) {
+                    Button(
+                        onClick = {
+                            val intent = Intent(context, OverlayService::class.java)
+                            context.stopService(intent)
+                            android.os.Handler(android.os.Looper.getMainLooper()).postDelayed({
+                                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                                    context.startForegroundService(intent)
+                                } else {
+                                    context.startService(intent)
+                                }
+                                Toast.makeText(context, "Service Refreshed", Toast.LENGTH_SHORT).show()
+                            }, 300)
+                        },
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Text("Refresh Service & Apply Changes")
+                    }
+                }
+                
                 if (!canDrawOverlays || selectedFolderUri == null) {
                     Text(
                         "Please select a folder and grant permission first.",

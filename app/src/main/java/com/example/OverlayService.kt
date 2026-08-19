@@ -66,6 +66,9 @@ import androidx.compose.material3.Icon
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.ui.unit.IntOffset
 
+import androidx.compose.material.icons.filled.Close
+import androidx.compose.material3.IconButton
+
 class OverlayService : Service(), LifecycleOwner, ViewModelStoreOwner, SavedStateRegistryOwner {
 
     private lateinit var windowManager: WindowManager
@@ -132,6 +135,9 @@ class OverlayService : Service(), LifecycleOwner, ViewModelStoreOwner, SavedStat
         return START_STICKY
     }
 
+    private var windowX = 0
+    private var windowY = 100 // default y offset
+
     @SuppressLint("ClickableViewAccessibility")
     private fun setupOverlay() {
         val layoutParams = WindowManager.LayoutParams(
@@ -173,8 +179,45 @@ class OverlayService : Service(), LifecycleOwner, ViewModelStoreOwner, SavedStat
                             val newGravity = if (side == PanelSide.LEFT) Gravity.START or Gravity.TOP else Gravity.END or Gravity.TOP
                             if (layoutParams.gravity != newGravity) {
                                 layoutParams.gravity = newGravity
-                                try { windowManager.updateViewLayout(this, layoutParams) } catch (e: Exception) {}
+                                try { windowManager.updateViewLayout(this@apply, layoutParams) } catch (e: Exception) {}
                             }
+                        },
+                        onUpdateWindowParams = { expanded, triggerType ->
+                            if (expanded) {
+                                layoutParams.width = WindowManager.LayoutParams.WRAP_CONTENT
+                                layoutParams.height = WindowManager.LayoutParams.MATCH_PARENT
+                                layoutParams.x = 0
+                                layoutParams.y = 0
+                            } else if (triggerType == TriggerType.FLOATING_BUTTON) {
+                                layoutParams.width = WindowManager.LayoutParams.WRAP_CONTENT
+                                layoutParams.height = WindowManager.LayoutParams.WRAP_CONTENT
+                                layoutParams.x = windowX
+                                layoutParams.y = windowY
+                            } else {
+                                layoutParams.width = WindowManager.LayoutParams.WRAP_CONTENT
+                                layoutParams.height = WindowManager.LayoutParams.MATCH_PARENT
+                                layoutParams.x = 0
+                                layoutParams.y = 0
+                            }
+                            try { windowManager.updateViewLayout(this@apply, layoutParams) } catch (e: Exception) {}
+                        },
+                        onDragBubble = { dx, dy ->
+                            val gravityStart = layoutParams.gravity and Gravity.START == Gravity.START
+                            if (gravityStart) {
+                                windowX += dx.toInt()
+                            } else {
+                                windowX -= dx.toInt()
+                            }
+                            windowY += dy.toInt()
+                            layoutParams.x = windowX
+                            layoutParams.y = windowY
+                            try { windowManager.updateViewLayout(this@apply, layoutParams) } catch (e: Exception) {}
+                            
+                            val metrics = resources.displayMetrics
+                            windowY > metrics.heightPixels - 400
+                        },
+                        onCloseService = {
+                            stopSelf()
                         }
                     )
                 }
@@ -203,7 +246,14 @@ class OverlayService : Service(), LifecycleOwner, ViewModelStoreOwner, SavedStat
 }
 
 @Composable
-fun OverlayContent(viewModel: MainViewModel, imageLoader: ImageLoader, onUpdateGravity: (PanelSide) -> Unit) {
+fun OverlayContent(
+    viewModel: MainViewModel, 
+    imageLoader: ImageLoader, 
+    onUpdateGravity: (PanelSide) -> Unit,
+    onUpdateWindowParams: (Boolean, TriggerType) -> Unit,
+    onDragBubble: (Float, Float) -> Boolean,
+    onCloseService: () -> Unit
+) {
     var expanded by remember { mutableStateOf(false) }
     val scope = rememberCoroutineScope()
     val context = androidx.compose.ui.platform.LocalContext.current
@@ -213,8 +263,14 @@ fun OverlayContent(viewModel: MainViewModel, imageLoader: ImageLoader, onUpdateG
     val panelWidthState by viewModel.panelWidth.collectAsState()
     val triggerType by viewModel.triggerType.collectAsState()
 
+    var isNearBottom by remember { mutableStateOf(false) }
+
     LaunchedEffect(panelSide) {
         onUpdateGravity(panelSide)
+    }
+
+    LaunchedEffect(expanded, triggerType) {
+        onUpdateWindowParams(expanded, triggerType)
     }
 
     val widthFraction = when (panelWidthState) {
@@ -224,52 +280,77 @@ fun OverlayContent(viewModel: MainViewModel, imageLoader: ImageLoader, onUpdateG
     }
     
     val expandedWidthDp = (context.resources.displayMetrics.widthPixels / context.resources.displayMetrics.density / widthFraction).dp
-    val collapsedWidthDp = if (triggerType == TriggerType.FLOATING_BUTTON) 48.dp else 24.dp
+    
+    val isEdgeSwipe = triggerType == TriggerType.EDGE_SWIPE
 
-    Box(
-        modifier = Modifier
-            .fillMaxHeight()
-            .width(if (expanded) expandedWidthDp else collapsedWidthDp)
-            .background(Color.Transparent)
-            .pointerInput(triggerType, panelSide) {
-                detectDragGestures { change, dragAmount ->
-                    if (!expanded) {
-                        val isOpening = if (panelSide == PanelSide.LEFT) dragAmount.x > 10 else dragAmount.x < -10
-                        if (isOpening && triggerType == TriggerType.EDGE_SWIPE) {
-                            expanded = true
-                            change.consume()
-                        }
-                    } else {
-                        val isClosing = if (panelSide == PanelSide.LEFT) dragAmount.x < -10 else dragAmount.x > 10
-                        if (isClosing) {
-                            expanded = false
-                            change.consume()
-                        }
+    var baseModifier = if (expanded) {
+        Modifier.fillMaxHeight().width(expandedWidthDp)
+    } else if (isEdgeSwipe) {
+        Modifier.fillMaxHeight().width(10.dp)
+    } else {
+        Modifier.wrapContentSize()
+    }
+
+    baseModifier = baseModifier.background(Color.Transparent)
+
+    if (expanded || isEdgeSwipe) {
+        baseModifier = baseModifier.pointerInput(expanded, panelSide) {
+            detectDragGestures { change, dragAmount ->
+                if (!expanded) {
+                    val isOpening = if (panelSide == PanelSide.LEFT) dragAmount.x > 10 else dragAmount.x < -10
+                    if (isOpening) {
+                        expanded = true
+                        change.consume()
+                    }
+                } else {
+                    val isClosing = if (panelSide == PanelSide.LEFT) dragAmount.x < -10 else dragAmount.x > 10
+                    if (isClosing) {
+                        expanded = false
+                        change.consume()
                     }
                 }
             }
-    ) {
+        }
+    }
+
+    Box(modifier = baseModifier) {
         if (!expanded) {
             if (triggerType == TriggerType.FLOATING_BUTTON) {
                 Box(
                     modifier = Modifier
-                        .align(Alignment.Center)
-                        .size(48.dp)
-                        .padding(4.dp)
+                        .size(64.dp)
+                        .padding(8.dp)
                         .clip(CircleShape)
-                        .background(MaterialTheme.colorScheme.primary.copy(alpha = 0.5f))
+                        .background(if (isNearBottom) MaterialTheme.colorScheme.error.copy(alpha = 0.8f) else MaterialTheme.colorScheme.primary.copy(alpha = 0.8f))
+                        .pointerInput(Unit) {
+                            detectDragGestures(
+                                onDragEnd = {
+                                    if (isNearBottom) {
+                                        onCloseService()
+                                    }
+                                    isNearBottom = false
+                                }
+                            ) { change, dragAmount ->
+                                change.consume()
+                                isNearBottom = onDragBubble(dragAmount.x, dragAmount.y)
+                            }
+                        }
                         .clickable { expanded = true },
                     contentAlignment = Alignment.Center
                 ) {
-                    Icon(imageVector = Icons.Default.Image, contentDescription = "Open Gallery", tint = MaterialTheme.colorScheme.onPrimary)
+                    if (isNearBottom) {
+                        Icon(imageVector = Icons.Default.Close, contentDescription = "Close", tint = MaterialTheme.colorScheme.onError)
+                    } else {
+                        Icon(imageVector = Icons.Default.Image, contentDescription = "Open Gallery", tint = MaterialTheme.colorScheme.onPrimary)
+                    }
                 }
             } else {
                 Box(
                     modifier = Modifier
                         .fillMaxHeight()
-                        .width(4.dp)
+                        .width(2.dp)
                         .align(if (panelSide == PanelSide.LEFT) Alignment.CenterStart else Alignment.CenterEnd)
-                        .background(Color.White.copy(alpha = 0.1f))
+                        .background(Color.White.copy(alpha = 0.05f))
                 )
             }
         } else {
@@ -289,13 +370,28 @@ fun OverlayContent(viewModel: MainViewModel, imageLoader: ImageLoader, onUpdateG
                 val isLoading by viewModel.isLoading.collectAsState()
 
                 Column(modifier = Modifier.fillMaxSize()) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth().padding(8.dp),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(
+                            "SideGallery", 
+                            style = MaterialTheme.typography.titleMedium,
+                            modifier = Modifier.padding(start = 8.dp)
+                        )
+                        IconButton(onClick = onCloseService) {
+                            Icon(imageVector = Icons.Default.Close, contentDescription = "Close App")
+                        }
+                    }
+
                     if (isLoading) {
                         Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                             CircularProgressIndicator()
                         }
                     } else if (images.isEmpty()) {
                         Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                            Text("Nessuna immagine", style = MaterialTheme.typography.bodySmall)
+                            Text("No images found", style = MaterialTheme.typography.bodySmall)
                         }
                     } else {
                         LazyVerticalGrid(

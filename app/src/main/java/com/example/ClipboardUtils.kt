@@ -62,12 +62,12 @@ object ClipboardUtils {
                     
                     // On some Android versions we need to grant URI permissions to the clipboard
                     // Note: setPrimaryClip handles some of this, but it's good practice.
-                    Toast.makeText(context, "Immagine copiata!", Toast.LENGTH_SHORT).show()
+                    Toast.makeText(context, "Image copied to clipboard!", Toast.LENGTH_SHORT).show()
                 }
             } catch (e: Exception) {
                 e.printStackTrace()
                 withContext(Dispatchers.Main) {
-                    Toast.makeText(context, "Errore durante la copia", Toast.LENGTH_SHORT).show()
+                    Toast.makeText(context, "Failed to copy image", Toast.LENGTH_SHORT).show()
                 }
             }
         }
