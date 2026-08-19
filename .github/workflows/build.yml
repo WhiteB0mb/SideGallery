@@ -19,11 +19,24 @@ jobs:
           java-version: '17'
           distribution: 'temurin'
 
-      - name: Grant execute permission for gradlew
-        run: chmod +x gradlew
+      - name: Setup Gradle
+        uses: gradle/actions/setup-gradle@v4
 
-      - name: Build with Gradle
-        run: ./gradlew assembleDebug
+      - name: Build APK
+        run: |
+          # Cerca se esiste gradlew in qualche cartella
+          GRADLEW_PATH=$(find . -name "gradlew" | head -n 1)
+
+          if [ -n "$GRADLEW_PATH" ]; then
+            DIR=$(dirname "$GRADLEW_PATH")
+            echo "Gradlew trovato in: $DIR"
+            cd "$DIR"
+            chmod +x gradlew
+            ./gradlew assembleDebug
+          else
+            echo "Gradlew non presente. Uso Gradle di sistema..."
+            gradle assembleDebug
+          fi
 
       - name: Upload APK artifact
         uses: actions/upload-artifact@v4
