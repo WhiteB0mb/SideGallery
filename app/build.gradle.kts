@@ -1,7 +1,6 @@
 plugins {
     alias(libs.plugins.android.application)
     alias(libs.plugins.kotlin.compose)
-    alias(libs.plugins.google.devtools.ksp)
 }
 
 android {
@@ -37,7 +36,8 @@ android {
     buildTypes {
         release {
             isCrunchPngs = false
-            isMinifyEnabled = false
+            isMinifyEnabled = true
+            isShrinkResources = true
             proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
             signingConfig = signingConfigs.getByName("release")
         }
@@ -74,11 +74,8 @@ dependencies {
     implementation(libs.androidx.lifecycle.runtime.ktx)
     implementation(libs.androidx.lifecycle.viewmodel.compose)
     
-    // File Storage SAF & Database locale
+    // Storage (Storage Access Framework)
     implementation("androidx.documentfile:documentfile:1.0.1")
-    implementation(libs.androidx.room.ktx)
-    implementation(libs.androidx.room.runtime)
-    "ksp"(libs.androidx.room.compiler)
     
     // Immagini & GIF (Coil)
     implementation(libs.coil.compose)

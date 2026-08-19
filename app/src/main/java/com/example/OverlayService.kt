@@ -33,17 +33,20 @@ import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Image
+import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.ComposeView
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import androidx.core.app.NotificationCompat
 import androidx.lifecycle.*
 import androidx.savedstate.SavedStateRegistry
@@ -166,6 +169,7 @@ class OverlayService : Service(), LifecycleOwner, ViewModelStoreOwner, SavedStat
             setViewTreeSavedStateRegistryOwner(this@OverlayService)
             
             val imageLoader = ImageLoader.Builder(context)
+                .crossfade(true)
                 .components {
                     if (Build.VERSION.SDK_INT >= 28) {
                         add(ImageDecoderDecoder.Factory())
@@ -175,7 +179,13 @@ class OverlayService : Service(), LifecycleOwner, ViewModelStoreOwner, SavedStat
                 }
                 .memoryCache {
                     coil.memory.MemoryCache.Builder(context)
-                        .maxSizePercent(0.15)
+                        .maxSizePercent(0.25)
+                        .build()
+                }
+                .diskCache {
+                    coil.disk.DiskCache.Builder()
+                        .directory(context.cacheDir.resolve("image_cache"))
+                        .maxSizePercent(0.05)
                         .build()
                 }
                 .build()
@@ -196,7 +206,7 @@ class OverlayService : Service(), LifecycleOwner, ViewModelStoreOwner, SavedStat
                         imageLoader = imageLoader, 
                         orientation = currentOri,
                         onUpdateGravity = {},
-                        onUpdateWindowParams = { expanded, triggerType, panelSide, shouldHide ->
+                        onUpdateWindowParams = { expanded, triggerType, panelSide, shouldHide, swipeHeightPercent, isGuideActive ->
                             if (shouldHide) {
                                 composeView.visibility = View.GONE
                                 layoutParams.width = 0
@@ -220,10 +230,12 @@ class OverlayService : Service(), LifecycleOwner, ViewModelStoreOwner, SavedStat
                                         layoutParams.y = windowY
                                     } else {
                                         layoutParams.gravity = if (panelSide == PanelSide.LEFT) Gravity.START or Gravity.TOP else Gravity.END or Gravity.TOP
-                                        layoutParams.width = (24 * resources.displayMetrics.density).toInt()
-                                        layoutParams.height = WindowManager.LayoutParams.MATCH_PARENT
-                                        layoutParams.x = 0
+                                        val density = resources.displayMetrics.density
+                                        layoutParams.width = if (isGuideActive) (24 * density).toInt() else (16 * density).toInt()
+                                        val percent = (swipeHeightPercent.coerceIn(10, 100)) / 100f
+                                        layoutParams.height = (resources.displayMetrics.heightPixels * percent).toInt()
                                         layoutParams.y = 0
+                                        layoutParams.x = 0
                                     }
                                 }
                             }
@@ -276,7 +288,7 @@ fun OverlayContent(
     imageLoader: ImageLoader, 
     orientation: Int,
     onUpdateGravity: (PanelSide) -> Unit,
-    onUpdateWindowParams: (Boolean, TriggerType, PanelSide, Boolean) -> Unit,
+    onUpdateWindowParams: (Boolean, TriggerType, PanelSide, Boolean, Int, Boolean) -> Unit,
     onDragBubble: (Float, Float) -> Boolean,
     onCloseService: () -> Unit
 ) {
@@ -290,6 +302,18 @@ fun OverlayContent(
     val panelWidthState by viewModel.panelWidth.collectAsState()
     val triggerType by viewModel.triggerType.collectAsState()
     val hideInLandscape by viewModel.hideInLandscape.collectAsState()
+    val swipeHeightPercent by viewModel.swipeHeightPercent.collectAsState()
+    val guidePreviewUntil by viewModel.guidePreviewUntil.collectAsState()
+
+    var isGuideActive by remember { mutableStateOf(false) }
+
+    LaunchedEffect(guidePreviewUntil) {
+        while (System.currentTimeMillis() < guidePreviewUntil) {
+            isGuideActive = true
+            kotlinx.coroutines.delay(100)
+        }
+        isGuideActive = false
+    }
 
     var isNearBottom by remember { mutableStateOf(false) }
 
@@ -297,12 +321,21 @@ fun OverlayContent(
     val shouldHide = isLandscape && hideInLandscape && !expanded
 
     fun toggleExpand(expand: Boolean) {
-        onUpdateWindowParams(expand, triggerType, panelSide, shouldHide)
+        if (expand) {
+            viewModel.loadImages()
+        }
+        onUpdateWindowParams(expand, triggerType, panelSide, shouldHide, swipeHeightPercent, isGuideActive)
         expanded = expand
     }
 
-    LaunchedEffect(expanded, triggerType, panelSide, shouldHide) {
-        onUpdateWindowParams(expanded, triggerType, panelSide, shouldHide)
+    LaunchedEffect(expanded) {
+        if (expanded) {
+            viewModel.loadImages()
+        }
+    }
+
+    LaunchedEffect(expanded, triggerType, panelSide, shouldHide, swipeHeightPercent, isGuideActive) {
+        onUpdateWindowParams(expanded, triggerType, panelSide, shouldHide, swipeHeightPercent, isGuideActive)
     }
 
     LaunchedEffect(itemToDelete) {
@@ -427,13 +460,58 @@ fun OverlayContent(
                     }
                 }
             } else {
-                Box(
-                    modifier = Modifier
-                        .fillMaxHeight()
-                        .width(2.dp)
-                        .align(if (panelSide == PanelSide.LEFT) Alignment.CenterStart else Alignment.CenterEnd)
-                        .background(Color.White.copy(alpha = 0.05f))
-                )
+                if (isGuideActive) {
+                    // Visually distinctive, semi-transparent light-blue glowing guide bar showing trigger area
+                    Box(
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .clip(
+                                if (panelSide == PanelSide.LEFT)
+                                    RoundedCornerShape(topEnd = 0.dp, bottomEnd = 16.dp)
+                                else
+                                    RoundedCornerShape(topStart = 0.dp, bottomStart = 16.dp)
+                            )
+                            .background(
+                                Brush.verticalGradient(
+                                    colors = listOf(
+                                        Color(0xFF38BDF8).copy(alpha = 0.70f),
+                                        Color(0xFF0284C7).copy(alpha = 0.45f)
+                                    )
+                                )
+                            )
+                            .border(
+                                width = 1.5.dp,
+                                color = Color(0xFFBAE6FD).copy(alpha = 0.9f),
+                                shape = if (panelSide == PanelSide.LEFT)
+                                    RoundedCornerShape(topEnd = 0.dp, bottomEnd = 16.dp)
+                                else
+                                    RoundedCornerShape(topStart = 0.dp, bottomStart = 16.dp)
+                            ),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Column(
+                            horizontalAlignment = Alignment.CenterHorizontally,
+                            verticalArrangement = Arrangement.Center,
+                            modifier = Modifier.padding(2.dp)
+                        ) {
+                            Text(
+                                text = "${swipeHeightPercent}%",
+                                color = Color.White,
+                                style = MaterialTheme.typography.labelSmall.copy(
+                                    fontWeight = androidx.compose.ui.text.font.FontWeight.Bold,
+                                    fontSize = 9.sp
+                                )
+                            )
+                        }
+                    }
+                } else {
+                    // Completely invisible touch area for edge swipe (no visual handle / pill)
+                    Box(
+                        modifier = Modifier
+                            .fillMaxHeight()
+                            .fillMaxWidth()
+                    )
+                }
             }
         } else {
             // Expanded Sidebar
@@ -463,87 +541,107 @@ fun OverlayContent(
                 val isLoading by viewModel.isLoading.collectAsState()
 
                 Column(modifier = Modifier.fillMaxSize()) {
-                    Row(
-                        modifier = Modifier.fillMaxWidth().padding(8.dp),
-                        horizontalArrangement = Arrangement.End,
-                        verticalAlignment = Alignment.CenterVertically
+                    // Images Grid / Empty / Loading taking remaining space
+                    Box(
+                        modifier = Modifier
+                            .weight(1f)
+                            .fillMaxWidth()
                     ) {
-                        IconButton(onClick = {
-                            val intent = Intent(context, MainActivity::class.java).apply {
-                                action = "com.sidegallery.app.ACTION_OPEN_PICKER"
-                                flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP
+                        if (isLoading) {
+                            Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                                CircularProgressIndicator(color = MaterialTheme.colorScheme.primary)
                             }
-                            context.startActivity(intent)
-                            toggleExpand(false)
-                        }) {
-                            Icon(imageVector = Icons.Default.Add, contentDescription = "Add Media", tint = MaterialTheme.colorScheme.onSurface)
-                        }
-                        IconButton(onClick = { toggleExpand(false) }) {
-                            Icon(imageVector = Icons.Default.Close, contentDescription = "Close Sidebar", tint = MaterialTheme.colorScheme.onSurface)
-                        }
-                    }
-
-                    if (isLoading) {
-                        Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                            CircularProgressIndicator(color = MaterialTheme.colorScheme.primary)
-                        }
-                    } else if (images.isEmpty()) {
-                        Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                            Text("No images found", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurface)
-                        }
-                    } else {
-                        LazyVerticalGrid(
-                            columns = GridCells.Fixed(gridColumns),
-                            contentPadding = PaddingValues(4.dp),
-                            modifier = Modifier.fillMaxSize()
-                        ) {
-                            items(images, key = { it.uri.toString() }) { item ->
-                                Box(
-                                    modifier = Modifier
-                                        .padding(4.dp)
-                                        .aspectRatio(1f)
-                                        .clip(RoundedCornerShape(8.dp))
-                                        .background(Color.Gray.copy(alpha = 0.3f))
-                                        .combinedClickable(
-                                            onClick = {
-                                                if (itemToDelete != null) {
-                                                    itemToDelete = null
-                                                } else {
-                                                    haptic.performHapticFeedback(androidx.compose.ui.hapticfeedback.HapticFeedbackType.LongPress)
-                                                    scope.launch {
-                                                        toggleExpand(false)
-                                                        ClipboardUtils.copyImageToClipboard(context, item.uri)
+                        } else if (images.isEmpty()) {
+                            Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                                Text("No images found", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurface)
+                            }
+                        } else {
+                            LazyVerticalGrid(
+                                columns = GridCells.Fixed(gridColumns),
+                                contentPadding = PaddingValues(4.dp),
+                                modifier = Modifier.fillMaxSize()
+                            ) {
+                                items(images, key = { it.uri.toString() }) { item ->
+                                    Box(
+                                        modifier = Modifier
+                                            .padding(4.dp)
+                                            .aspectRatio(1f)
+                                            .clip(RoundedCornerShape(8.dp))
+                                            .background(Color.Gray.copy(alpha = 0.3f))
+                                            .combinedClickable(
+                                                onClick = {
+                                                    if (itemToDelete != null) {
+                                                        itemToDelete = null
+                                                    } else {
+                                                        haptic.performHapticFeedback(androidx.compose.ui.hapticfeedback.HapticFeedbackType.LongPress)
+                                                        scope.launch {
+                                                            toggleExpand(false)
+                                                            ClipboardUtils.copyImageToClipboard(context, item.uri)
+                                                        }
                                                     }
+                                                },
+                                                onLongClick = {
+                                                    haptic.performHapticFeedback(androidx.compose.ui.hapticfeedback.HapticFeedbackType.LongPress)
+                                                    itemToDelete = item.uri
                                                 }
-                                            },
-                                            onLongClick = {
-                                                haptic.performHapticFeedback(androidx.compose.ui.hapticfeedback.HapticFeedbackType.LongPress)
-                                                itemToDelete = item.uri
-                                            }
+                                            )
+                                    ) {
+                                        AsyncImage(
+                                            model = item.uri,
+                                            imageLoader = imageLoader,
+                                            contentDescription = item.name,
+                                            contentScale = ContentScale.Crop,
+                                            modifier = Modifier.fillMaxSize()
                                         )
-                                ) {
-                                    AsyncImage(
-                                        model = item.uri,
-                                        imageLoader = imageLoader,
-                                        contentDescription = item.name,
-                                        contentScale = ContentScale.Crop,
-                                        modifier = Modifier.fillMaxSize()
-                                    )
-                                    if (itemToDelete == item.uri) {
-                                        Box(
-                                            modifier = Modifier
-                                                .fillMaxSize()
-                                                .background(Color.Black.copy(alpha = 0.7f))
+                                        if (itemToDelete == item.uri) {
+                                            Box(
+                                                modifier = Modifier
+                                                    .fillMaxSize()
+                                                    .background(Color.Black.copy(alpha = 0.7f))
                                                 .clickable {
                                                     viewModel.deleteImage(context, item.uri)
                                                     itemToDelete = null
                                                 },
-                                            contentAlignment = Alignment.Center
-                                        ) {
-                                            Icon(imageVector = Icons.Default.Delete, contentDescription = "Delete", tint = Color.Red, modifier = Modifier.size(36.dp))
+                                                contentAlignment = Alignment.Center
+                                            ) {
+                                                Icon(imageVector = Icons.Default.Delete, contentDescription = "Delete", tint = Color.Red, modifier = Modifier.size(36.dp))
+                                            }
                                         }
                                     }
                                 }
+                            }
+                        }
+                    }
+
+                    // Bottom Action Bar for effortless one-handed thumb access (+, Refresh, Close)
+                    Surface(
+                        color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.6f),
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(horizontal = 8.dp, vertical = 4.dp),
+                            horizontalArrangement = Arrangement.SpaceEvenly,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            IconButton(onClick = { viewModel.loadImages() }) {
+                                Icon(imageVector = Icons.Default.Refresh, contentDescription = "Refresh", tint = MaterialTheme.colorScheme.onSurface)
+                            }
+                            IconButton(onClick = {
+                                val intent = Intent(context, TransparentPickerActivity::class.java).apply {
+                                    flags = Intent.FLAG_ACTIVITY_NEW_TASK or 
+                                            Intent.FLAG_ACTIVITY_MULTIPLE_TASK or 
+                                            Intent.FLAG_ACTIVITY_NO_ANIMATION or 
+                                            Intent.FLAG_ACTIVITY_EXCLUDE_FROM_RECENTS
+                                }
+                                context.startActivity(intent)
+                                toggleExpand(false)
+                            }) {
+                                Icon(imageVector = Icons.Default.Add, contentDescription = "Add Media", tint = MaterialTheme.colorScheme.primary)
+                            }
+                            IconButton(onClick = { toggleExpand(false) }) {
+                                Icon(imageVector = Icons.Default.Close, contentDescription = "Close Sidebar", tint = MaterialTheme.colorScheme.onSurface)
                             }
                         }
                     }

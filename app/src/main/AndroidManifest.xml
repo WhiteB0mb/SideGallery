@@ -51,13 +51,16 @@
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
-
-            <!-- Necessario per far funzionare il tasto '+' della barra -->
-            <intent-filter>
-                <action android:name="com.sidegallery.app.ACTION_OPEN_PICKER" />
-                <category android:name="android.intent.category.DEFAULT" />
-            </intent-filter>
         </activity>
+
+        <activity
+            android:name="com.example.TransparentPickerActivity"
+            android:exported="false"
+            android:taskAffinity=""
+            android:excludeFromRecents="true"
+            android:noHistory="true"
+            android:theme="@style/Theme.Transparent"
+            android:launchMode="singleInstance" />
     </application>
 
 </manifest>

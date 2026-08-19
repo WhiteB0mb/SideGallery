@@ -17,12 +17,17 @@ import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.selection.selectable
 import androidx.compose.foundation.selection.selectableGroup
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Info
+import androidx.compose.material.icons.filled.Visibility
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
@@ -52,7 +57,7 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun handleIntent(intent: Intent?) {
-        if (intent?.action == "com.example.ACTION_OPEN_PICKER") {
+        if (intent?.action == "com.sidegallery.app.ACTION_OPEN_PICKER" || intent?.action == "com.example.ACTION_OPEN_PICKER") {
             mediaPicker.launch(androidx.activity.result.PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageAndVideo))
         }
     }
@@ -266,6 +271,97 @@ fun MainScreen(
                     )
                 }
 
+                // If Edge Swipe is selected, show swipe height customization & live guide preview
+                if (triggerType == TriggerType.EDGE_SWIPE) {
+                    val swipeHeightPercent by viewModel.swipeHeightPercent.collectAsState()
+                    var manualInput by remember(swipeHeightPercent) { mutableStateOf(swipeHeightPercent.toString()) }
+
+                    Surface(
+                        color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
+                        shape = MaterialTheme.shapes.medium,
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Column(
+                            modifier = Modifier.padding(12.dp),
+                            verticalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            Text(
+                                text = "Swipe Bar Height: ${swipeHeightPercent}% (From Top)",
+                                style = MaterialTheme.typography.titleSmall
+                            )
+                            Text(
+                                text = "Starts from the top edge. Shorter heights keep the keyboard area completely free.",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+
+                            // Slider from 10% to 100%
+                            Slider(
+                                value = swipeHeightPercent.toFloat(),
+                                onValueChange = {
+                                    viewModel.setSwipeHeightPercent(kotlin.math.round(it).toInt(), showGuide = true)
+                                },
+                                valueRange = 10f..100f,
+                                modifier = Modifier.fillMaxWidth()
+                            )
+
+                            // Quick Presets
+                            Row(
+                                horizontalArrangement = Arrangement.spacedBy(6.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                                modifier = Modifier.fillMaxWidth()
+                            ) {
+                                listOf(100 to "100% (Full)", 75 to "75%", 50 to "50%", 25 to "25%").forEach { (value, label) ->
+                                    AssistChip(
+                                        onClick = { viewModel.setSwipeHeightPercent(value, showGuide = true) },
+                                        label = { Text(label, style = MaterialTheme.typography.labelSmall) },
+                                        colors = if (swipeHeightPercent == value)
+                                            AssistChipDefaults.assistChipColors(containerColor = MaterialTheme.colorScheme.primaryContainer)
+                                        else
+                                            AssistChipDefaults.assistChipColors()
+                                    )
+                                }
+                            }
+
+                            // Manual Number Input + Preview Button
+                            Row(
+                                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                                modifier = Modifier.fillMaxWidth()
+                            ) {
+                                OutlinedTextField(
+                                    value = manualInput,
+                                    onValueChange = { input ->
+                                        val filtered = input.filter { it.isDigit() }.take(3)
+                                        manualInput = filtered
+                                        val parsed = filtered.toIntOrNull()
+                                        if (parsed != null && parsed in 10..100) {
+                                            viewModel.setSwipeHeightPercent(parsed, showGuide = true)
+                                        }
+                                    },
+                                    label = { Text("Exact %") },
+                                    singleLine = true,
+                                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                                    modifier = Modifier.width(96.dp)
+                                )
+
+                                OutlinedButton(
+                                    onClick = { viewModel.triggerGuidePreview(3000L) },
+                                    modifier = Modifier.weight(1f)
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.Default.Visibility,
+                                        contentDescription = "Preview Guide",
+                                        modifier = Modifier.size(18.dp)
+                                    )
+                                    Spacer(modifier = Modifier.width(6.dp))
+                                    Text("Preview Guide (3s)")
+                                }
+                            }
+                        }
+                    }
+                }
+
                 // Theme Mode
                 val themeMode by viewModel.themeMode.collectAsState()
                 Text("Overlay Theme", style = MaterialTheme.typography.bodyMedium)
@@ -296,6 +392,49 @@ fun MainScreen(
                         checked = hideInLandscape,
                         onCheckedChange = { viewModel.setHideInLandscape(it) }
                     )
+                }
+            }
+        }
+
+        // Card 4: Android 13+ Restricted Settings Guide (Sideloaded / APK Special Permissions)
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            Card(
+                modifier = Modifier.fillMaxWidth(),
+                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.7f))
+            ) {
+                Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Icon(
+                            imageVector = Icons.Default.Info,
+                            contentDescription = "Info",
+                            tint = MaterialTheme.colorScheme.primary
+                        )
+                        Text("Android 13+ Restricted Settings (If permissions are grayed out)", style = MaterialTheme.typography.titleMedium)
+                    }
+                    Text(
+                        text = "If Android shows 'Restricted setting' or grays out the overlay/accessibility permission when opening the settings:\n" +
+                                "1. Click 'Open App Info' below.\n" +
+                                "2. Tap the 3 dots (⋮) in the top-right corner.\n" +
+                                "3. Tap 'Allow restricted settings' (Consenti impostazioni con restrizioni).\n" +
+                                "4. Authenticate (PIN/Fingerprint) and return here.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    Button(
+                        onClick = {
+                            try {
+                                val intent = Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS).apply {
+                                    data = Uri.parse("package:${context.packageName}")
+                                }
+                                context.startActivity(intent)
+                            } catch (e: Exception) {
+                                Toast.makeText(context, "Could not open App Info", Toast.LENGTH_SHORT).show()
+                            }
+                        },
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Text("Open App Info (3 Dots ⋮ Menu)")
+                    }
                 }
             }
         }
