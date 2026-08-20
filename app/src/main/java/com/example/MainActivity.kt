@@ -58,7 +58,8 @@ import androidx.lifecycle.compose.LocalLifecycleOwner
 import coil.compose.AsyncImage
 import com.example.ui.theme.MyApplicationTheme
 import kotlinx.coroutines.launch
-
+import androidx.compose.ui.res.painterResource
+import com.example.R
 
 class MainActivity : ComponentActivity() {
 
