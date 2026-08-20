@@ -58,8 +58,9 @@ import androidx.lifecycle.compose.LocalLifecycleOwner
 import coil.compose.AsyncImage
 import com.example.ui.theme.MyApplicationTheme
 import kotlinx.coroutines.launch
+import androidx.compose.foundation.Image
 import androidx.compose.ui.res.painterResource
-import com.example.R
+import com.sidegallery.app.R // Importa il file R corretto del tuo progetto
 
 class MainActivity : ComponentActivity() {
 
@@ -323,7 +324,7 @@ fun OnboardingScreen(
                         horizontalAlignment = Alignment.CenterHorizontally,
                         verticalArrangement = Arrangement.spacedBy(16.dp)
                     ) {
-                        // <-- METTI QUESTO AL POSTO DEL VECCHIO SURFACE CON L'ICONA -->
+                        
                         Image(
                             painter = painterResource(id = R.drawable.ic_launcher),
                             contentDescription = "SideGallery App Icon",
