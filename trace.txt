@@ -1,0 +1,556 @@
+1181  0: @Composable
+1182  0: fun MainScreen(
+1183  0: viewModel: MainViewModel,
+1184  0: modifier: Modifier = Modifier,
+1185  0: onRequestOverlayPermission: () -> Unit,
+1186  0: onPickFolder: () -> Unit,
+1187  0: onPickMedia: () -> Unit,
+1188  0: onToggleService: (Boolean) -> Unit,
+1189  0: onOpenGuide: () -> Unit,
+1190  0: onOpenPreviewSimulator: () -> Unit,
+1191  0: canDrawOverlays: Boolean,
+1192  0: onCheckPermission: () -> Unit
+1193  1: ) {
+1194  1: val selectedFolderUri by viewModel.selectedFolderUri.collectAsState()
+1195  1: val sortOption by viewModel.sortOption.collectAsState()
+1196  1: val gridColumns by viewModel.gridColumns.collectAsState()
+1197  1: val triggerType by viewModel.triggerType.collectAsState()
+1198  1: val panelSide by viewModel.panelSide.collectAsState()
+1199  1: val panelWidth by viewModel.panelWidth.collectAsState()
+1200  1: val scrollDirection by viewModel.scrollDirection.collectAsState()
+1201  1: val isLoading by viewModel.isLoading.collectAsState()
+1202  1: val images by viewModel.images.collectAsState()
+1203  1: 
+1204  1: val isServiceRunning by OverlayService.isRunning.collectAsState()
+1205  1: var isIgnoringBatteryOptimizations by remember { mutableStateOf(true) }
+1206  1: val context = LocalContext.current
+1207  1: 
+1208  1: val lifecycleOwner = LocalLifecycleOwner.current
+1209  2: DisposableEffect(lifecycleOwner) {
+1210  3: val observer = LifecycleEventObserver { _, event ->
+1211  4: if (event == Lifecycle.Event.ON_RESUME) {
+1212  4: onCheckPermission()
+1213  4: val pm = context.getSystemService(Context.POWER_SERVICE) as PowerManager
+1214  5: isIgnoringBatteryOptimizations = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+1215  5: pm.isIgnoringBatteryOptimizations(context.packageName)
+1216  4: } else true
+1217  3: }
+1218  2: }
+1219  2: lifecycleOwner.lifecycle.addObserver(observer)
+1220  3: onDispose {
+1221  3: lifecycleOwner.lifecycle.removeObserver(observer)
+1222  2: }
+1223  1: }
+1224  1: 
+1225  1: Column(
+1226  1: modifier = modifier
+1227  1: .fillMaxSize()
+1228  1: .verticalScroll(rememberScrollState())
+1229  1: .padding(16.dp),
+1230  1: verticalArrangement = Arrangement.spacedBy(16.dp)
+1231  2: ) {
+1232  2: // Quick Status & Service Master Switch Card
+1233  2: Card(
+1234  2: modifier = Modifier.fillMaxWidth(),
+1235  2: colors = CardDefaults.cardColors(
+1236  2: containerColor = if (isServiceRunning)
+1237  2: MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.4f)
+1238  2: else
+1239  2: MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)
+1240  2: )
+1241  3: ) {
+1242  4: Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+1243  4: Row(
+1244  4: modifier = Modifier.fillMaxWidth(),
+1245  4: horizontalArrangement = Arrangement.SpaceBetween,
+1246  4: verticalAlignment = Alignment.CenterVertically
+1247  5: ) {
+1248  6: Column {
+1249  6: Text("Overlay Service", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
+1250  6: Text(
+1251  6: text = if (isServiceRunning) "● Active in Background" else "○ Inactive",
+1252  6: color = if (isServiceRunning) Color(0xFF16A34A) else MaterialTheme.colorScheme.onSurfaceVariant,
+1253  6: style = MaterialTheme.typography.bodyMedium,
+1254  6: fontWeight = FontWeight.Medium
+1255  6: )
+1256  5: }
+1257  5: Switch(
+1258  5: checked = isServiceRunning,
+1259  5: onCheckedChange = { onToggleService(it) },
+1260  5: enabled = canDrawOverlays && selectedFolderUri != null
+1261  5: )
+1262  4: }
+1263  4: 
+1264  5: if (!canDrawOverlays || selectedFolderUri == null) {
+1265  5: Text(
+1266  5: "Please select a folder and grant overlay permission below to enable.",
+1267  5: style = MaterialTheme.typography.bodySmall,
+1268  5: color = MaterialTheme.colorScheme.error
+1269  5: )
+1270  4: }
+1271  3: }
+1272  2: }
+1273  2: 
+1274  2: // Live In-App Simulator Card (Always visible and usable to test inside the app!)
+1275  2: Card(
+1276  2: modifier = Modifier.fillMaxWidth(),
+1277  2: colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.secondaryContainer.copy(alpha = 0.4f))
+1278  3: ) {
+1279  4: Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+1280  5: Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+1281  5: Icon(Icons.Default.PlayCircleFilled, contentDescription = null, tint = MaterialTheme.colorScheme.secondary, modifier = Modifier.size(24.dp))
+1282  5: Text("Interactive In-App Preview", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+1283  4: }
+1284  4: Text(
+1285  4: text = "Test your sidebar layout, scrolling direction, and 1-tap clipboard copying right inside the app without needing background services enabled.",
+1286  4: style = MaterialTheme.typography.bodySmall,
+1287  4: color = MaterialTheme.colorScheme.onSurfaceVariant
+1288  4: )
+1289  4: Button(
+1290  4: onClick = onOpenPreviewSimulator,
+1291  4: modifier = Modifier.fillMaxWidth(),
+1292  4: colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.secondary)
+1293  5: ) {
+1294  5: Icon(Icons.Default.OpenInFull, contentDescription = null)
+1295  5: Spacer(Modifier.width(8.dp))
+1296  5: Text("Open Live Interactive Simulator")
+1297  4: }
+1298  3: }
+1299  2: }
+1300  2: 
+1301  2: // 1. Folder & Media Card
+1302  3: Card(modifier = Modifier.fillMaxWidth()) {
+1303  4: Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+1304  4: Row(
+1305  4: modifier = Modifier.fillMaxWidth(),
+1306  4: horizontalArrangement = Arrangement.SpaceBetween,
+1307  4: verticalAlignment = Alignment.CenterVertically
+1308  5: ) {
+1309  5: Text("1. Folder & Media", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+1310  6: if (images.isNotEmpty()) {
+1311  6: Text("${images.size} items", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.primary)
+1312  5: }
+1313  4: }
+1314  4: 
+1315  4: Text(
+1316  4: text = if (selectedFolderUri != null) "Selected: $selectedFolderUri" else "No folder selected",
+1317  4: style = MaterialTheme.typography.bodySmall,
+1318  4: color = MaterialTheme.colorScheme.onSurfaceVariant
+1319  4: )
+1320  4: 
+1321  5: Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+1322  6: Button(onClick = onPickFolder, modifier = Modifier.weight(1f)) {
+1323  6: Icon(Icons.Default.Folder, contentDescription = null)
+1324  6: Spacer(Modifier.width(6.dp))
+1325  6: Text(if (selectedFolderUri != null) "Change Folder" else "Select Folder")
+1326  5: }
+1327  4: }
+1328  4: 
+1329  5: if (selectedFolderUri != null) {
+1330  5: Button(
+1331  5: onClick = onPickMedia,
+1332  5: modifier = Modifier.fillMaxWidth(),
+1333  5: colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.secondary)
+1334  6: ) {
+1335  6: Icon(Icons.Default.Add, contentDescription = null)
+1336  6: Spacer(Modifier.width(6.dp))
+1337  6: Text("Add / Import Images (+)")
+1338  5: }
+1339  6: if (isLoading) {
+1340  6: LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
+1341  6: Divider()
+1342  6: 
+1343  6: // Sorting
+1344  6: Text("Sort By", style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.Medium)
+1345  6: val sortOptionsList = listOf(
+1346  6: Triple(SortOption.DATE_NEWEST, "Date: Newest", Icons.Default.Schedule),
+1347  6: Triple(SortOption.DATE_OLDEST, "Date: Oldest", Icons.Default.History),
+1348  6: Triple(SortOption.NAME_ASC, "Name: A → Z", Icons.Default.SortByAlpha),
+1349  6: Triple(SortOption.NAME_DESC, "Name: Z → A", Icons.Default.Sort),
+1350  6: Triple(SortOption.SIZE_LARGEST, "Size: Largest", Icons.Default.Storage),
+1351  6: Triple(SortOption.SIZE_SMALLEST, "Size: Smallest", Icons.Default.Compress)
+1352  6: )
+1353  7: Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+1354  8: for (i in sortOptionsList.indices step 2) {
+1355  9: Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+1356  9: val (opt1, label1, icon1) = sortOptionsList[i]
+1357  9: FilterChip(
+1358  9: selected = sortOption == opt1,
+1359  9: onClick = { viewModel.setSortOption(opt1) },
+1360  9: label = { Text(label1, style = MaterialTheme.typography.labelMedium, maxLines = 1) },
+1361 10: leadingIcon = {
+1362 10: Icon(
+1363 10: imageVector = icon1,
+1364 10: contentDescription = null,
+1365 10: modifier = Modifier.size(16.dp),
+1366 10: tint = if (sortOption == opt1) MaterialTheme.colorScheme.onPrimaryContainer else MaterialTheme.colorScheme.onSurfaceVariant
+1367 10: )
+1368  9: },
+1369  9: modifier = Modifier.weight(1f)
+1370  9: )
+1371 10: if (i + 1 < sortOptionsList.size) {
+1372 10: val (opt2, label2, icon2) = sortOptionsList[i + 1]
+1373 10: FilterChip(
+1374 10: selected = sortOption == opt2,
+1375 10: onClick = { viewModel.setSortOption(opt2) },
+1376 10: label = { Text(label2, style = MaterialTheme.typography.labelMedium, maxLines = 1) },
+1377 11: leadingIcon = {
+1378 11: Icon(
+1379 11: imageVector = icon2,
+1380 11: contentDescription = null,
+1381 11: modifier = Modifier.size(16.dp),
+1382 11: tint = if (sortOption == opt2) MaterialTheme.colorScheme.onPrimaryContainer else MaterialTheme.colorScheme.onSurfaceVariant
+1383 11: )
+1384 10: },
+1385 10: modifier = Modifier.weight(1f)
+1386 10: )
+1387  9: }
+1388  8: }
+1389  7: }
+1390  6: }
+1391  5: }
+1392  4: }
+1393  4: 
+1394  4: // 2. Trigger & Gestures Card
+1395  5: Card(modifier = Modifier.fillMaxWidth()) {
+1396  6: Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+1397  6: Text("2. Trigger & Gestures", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+1398  6: 
+1399  6: // Trigger Style
+1400  6: Text("Trigger Style", style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.Medium)
+1401  7: Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+1402  7: FilterChip(
+1403  7: selected = triggerType == TriggerType.EDGE_SWIPE,
+1404  7: onClick = { viewModel.setTriggerType(TriggerType.EDGE_SWIPE) },
+1405  7: label = { Text("Edge Swipe") }
+1406  7: )
+1407  7: FilterChip(
+1408  7: selected = triggerType == TriggerType.FLOATING_BUTTON,
+1409  7: onClick = { viewModel.setTriggerType(TriggerType.FLOATING_BUTTON) },
+1410  7: label = { Text("Floating Bubble") }
+1411  7: )
+1412  6: }
+1413  6: 
+1414  6: // Panel Side
+1415  6: Text("Screen Side", style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.Medium)
+1416  7: Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+1417  7: FilterChip(
+1418  7: selected = panelSide == PanelSide.LEFT,
+1419  7: onClick = { viewModel.setPanelSide(PanelSide.LEFT) },
+1420  7: label = { Text("Left Edge") }
+1421  7: )
+1422  7: FilterChip(
+1423  7: selected = panelSide == PanelSide.RIGHT,
+1424  7: onClick = { viewModel.setPanelSide(PanelSide.RIGHT) },
+1425  7: label = { Text("Right Edge") }
+1426  7: )
+1427  6: }
+1428  6: 
+1429  7: if (triggerType == TriggerType.EDGE_SWIPE) {
+1430  7: Divider()
+1431  7: 
+1432  7: // Trigger Reach (Edge Swipe only)
+1433  7: val swipeHeightPercent by viewModel.swipeHeightPercent.collectAsState()
+1434  8: Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+1435  8: Text(
+1436  8: "Edge Swipe Trigger Reach (${swipeHeightPercent}% of screen)",
+1437  8: style = MaterialTheme.typography.bodyMedium,
+1438  8: fontWeight = FontWeight.Medium
+1439  8: )
+1440  8: Text(
+1441  8: "Swipeable height at the top screen border to open the sidebar.",
+1442  8: style = MaterialTheme.typography.bodySmall,
+1443  8: color = MaterialTheme.colorScheme.onSurfaceVariant
+1444  8: )
+1445  8: Slider(
+1446  8: value = swipeHeightPercent.toFloat(),
+1447  8: onValueChange = { viewModel.setSwipeHeightPercent(it.toInt(), showGuide = true) },
+1448  8: valueRange = 10f..100f,
+1449  8: modifier = Modifier.fillMaxWidth()
+1450  8: )
+1451  8: Row(
+1452  8: modifier = Modifier.fillMaxWidth(),
+1453  8: horizontalArrangement = Arrangement.spacedBy(6.dp)
+1454  9: ) {
+1455 10: listOf(100 to "100%", 75 to "75%", 50 to "50%", 25 to "25%").forEach { (value, label) ->
+1456 10: AssistChip(
+1457 10: onClick = { viewModel.setSwipeHeightPercent(value, showGuide = true) },
+1458 10: label = { Text(label, style = MaterialTheme.typography.labelSmall, maxLines = 1) },
+1459 10: colors = if (swipeHeightPercent == value)
+1460 10: AssistChipDefaults.assistChipColors(containerColor = MaterialTheme.colorScheme.primaryContainer)
+1461 10: else
+1462 10: AssistChipDefaults.assistChipColors(),
+1463 10: modifier = Modifier.weight(1f)
+1464 10: )
+1465  9: }
+1466  8: }
+1467  8: OutlinedButton(
+1468  8: onClick = { viewModel.triggerGuidePreview(2500L) },
+1469  8: modifier = Modifier.fillMaxWidth()
+1470  9: ) {
+1471  9: Icon(
+1472  9: imageVector = Icons.Default.Visibility,
+1473  9: contentDescription = "Preview Guide",
+1474  9: modifier = Modifier.size(18.dp)
+1475  9: )
+1476  9: Spacer(modifier = Modifier.width(6.dp))
+1477  9: Text("Preview Trigger Area (3s)")
+1478  8: }
+1479  7: }
+1480  6: }
+1481  6: 
+1482  7: if (triggerType == TriggerType.FLOATING_BUTTON) {
+1483  7: Divider()
+1484  7: 
+1485  7: // Auto-hide in landscape (Only for Floating Bubble)
+1486  7: val hideInLandscape by viewModel.hideInLandscape.collectAsState()
+1487  7: Row(
+1488  7: modifier = Modifier.fillMaxWidth(),
+1489  7: horizontalArrangement = Arrangement.SpaceBetween,
+1490  7: verticalAlignment = Alignment.CenterVertically
+1491  8: ) {
+1492  9: Column(modifier = Modifier.weight(1f)) {
+1493  9: Text("Auto-hide in landscape", style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.Medium)
+1494  9: Text("Hides the floating bubble in fullscreen/video landscape mode", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+1495  8: }
+1496  8: Spacer(modifier = Modifier.width(8.dp))
+1497  8: Switch(
+1498  8: checked = hideInLandscape,
+1499  8: onCheckedChange = { viewModel.setHideInLandscape(it) }
+1500  8: )
+1501  7: }
+1502  6: }
+1503  6: 
+1504  6: Divider()
+1505  6: 
+1506  6: // Carousel Scroll Direction
+1507  6: Text("Carousel Scroll Direction", style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.Medium)
+1508  7: Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+1509  7: DirectionChoiceTile(
+1510  7: title = "Top to Bottom",
+1511  7: desc = "Standard downward scrolling",
+1512  7: icon = Icons.Default.ArrowDownward,
+1513  7: isSelected = scrollDirection == ScrollDirection.TOP_TO_BOTTOM,
+1514  7: onClick = { viewModel.setScrollDirection(ScrollDirection.TOP_TO_BOTTOM) }
+1515  7: )
+1516  7: DirectionChoiceTile(
+1517  7: title = "Bottom to Top",
+1518  7: desc = "Inverted upward scrolling",
+1519  7: icon = Icons.Default.ArrowUpward,
+1520  7: isSelected = scrollDirection == ScrollDirection.BOTTOM_TO_TOP,
+1521  7: onClick = { viewModel.setScrollDirection(ScrollDirection.BOTTOM_TO_TOP) }
+1522  7: )
+1523  6: }
+1524  5: }
+1525  4: }
+1526  4: 
+1527  4: // 3. Panel Dimensions & Layout Card
+1528  5: Card(modifier = Modifier.fillMaxWidth()) {
+1529  6: Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+1530  6: Text("3. Sidebar Dimensions & Appearance", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+1531  6: 
+1532  6: val panelHeightPercent by viewModel.panelHeightPercent.collectAsState()
+1533  6: val panelWidthPercent by viewModel.panelWidthPercent.collectAsState()
+1534  6: val panelOpacityPercent by viewModel.panelOpacityPercent.collectAsState()
+1535  6: 
+1536  6: // 1. Panel Vertical Height
+1537  7: Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+1538  7: Text(
+1539  7: "Panel Vertical Height (${panelHeightPercent}% of screen)",
+1540  7: style = MaterialTheme.typography.bodyMedium,
+1541  7: fontWeight = FontWeight.Medium
+1542  7: )
+1543  7: Text(
+1544  7: "How much vertical space the open sidebar occupies.",
+1545  7: style = MaterialTheme.typography.bodySmall,
+1546  7: color = MaterialTheme.colorScheme.onSurfaceVariant
+1547  7: )
+1548  7: Slider(
+1549  7: value = panelHeightPercent.toFloat(),
+1550  7: onValueChange = { viewModel.setPanelHeightPercent(it.toInt()) },
+1551  7: valueRange = 20f..100f,
+1552  7: modifier = Modifier.fillMaxWidth()
+1553  7: )
+1554  7: Row(
+1555  7: modifier = Modifier.fillMaxWidth(),
+1556  7: horizontalArrangement = Arrangement.spacedBy(6.dp)
+1557  8: ) {
+1558  9: listOf(25 to "25%", 50 to "50%", 75 to "75%", 100 to "100%").forEach { (value, label) ->
+1559  9: AssistChip(
+1560  9: onClick = { viewModel.setPanelHeightPercent(value) },
+1561  9: label = { Text(label, style = MaterialTheme.typography.labelSmall, maxLines = 1) },
+1562  9: colors = if (panelHeightPercent == value)
+1563  9: AssistChipDefaults.assistChipColors(containerColor = MaterialTheme.colorScheme.primaryContainer)
+1564  9: else
+1565  9: AssistChipDefaults.assistChipColors(),
+1566  9: modifier = Modifier.weight(1f)
+1567  9: )
+1568  8: }
+1569  7: }
+1570  6: }
+1571  6: 
+1572  6: Divider()
+1573  6: 
+1574  6: // 2. Panel Width
+1575  7: Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+1576  7: Text("Panel Width (${panelWidthPercent}% of screen)", style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.Medium)
+1577  7: Slider(
+1578  7: value = panelWidthPercent.toFloat(),
+1579  7: onValueChange = { viewModel.setPanelWidthPercent(it.toInt()) },
+1580  7: valueRange = 20f..100f,
+1581  7: modifier = Modifier.fillMaxWidth()
+1582  7: )
+1583  7: Row(
+1584  7: modifier = Modifier.fillMaxWidth(),
+1585  7: horizontalArrangement = Arrangement.spacedBy(6.dp)
+1586  8: ) {
+1587  9: listOf(33 to "33%", 50 to "50%", 66 to "66%", 100 to "100%").forEach { (value, label) ->
+1588  9: AssistChip(
+1589  9: onClick = { viewModel.setPanelWidthPercent(value) },
+1590  9: label = { Text(label, style = MaterialTheme.typography.labelSmall, maxLines = 1) },
+1591  9: colors = if (panelWidthPercent == value)
+1592  9: AssistChipDefaults.assistChipColors(containerColor = MaterialTheme.colorScheme.primaryContainer)
+1593  9: else
+1594  9: AssistChipDefaults.assistChipColors(),
+1595  9: modifier = Modifier.weight(1f)
+1596  9: )
+1597  8: }
+1598  7: }
+1599  6: }
+1600  6: 
+1601  6: Divider()
+1602  6: 
+1603  6: // 3. Background Opacity
+1604  7: Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+1605  8: Row(verticalAlignment = Alignment.CenterVertically) {
+1606  8: Text("Background Opacity (${panelOpacityPercent}%)", style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.Medium)
+1607  8: Spacer(modifier = Modifier.weight(1f))
+1608  8: Text(
+1609  8: text = if (panelOpacityPercent == 0) "Transparent" else if (panelOpacityPercent == 100) "Solid" else "${panelOpacityPercent}%",
+1610  8: style = MaterialTheme.typography.labelSmall,
+1611  8: color = MaterialTheme.colorScheme.primary
+1612  8: )
+1613  7: }
+1614  7: Text(
+1615  7: "Transparency of the sidebar canvas background (0% = invisible, 100% = solid).",
+1616  7: style = MaterialTheme.typography.bodySmall,
+1617  7: color = MaterialTheme.colorScheme.onSurfaceVariant
+1618  7: )
+1619  7: Slider(
+1620  7: value = panelOpacityPercent.toFloat(),
+1621  7: onValueChange = { viewModel.setPanelOpacityPercent(it.toInt()) },
+1622  7: valueRange = 0f..100f,
+1623  7: modifier = Modifier.fillMaxWidth()
+1624  7: )
+1625  7: Row(
+1626  7: modifier = Modifier.fillMaxWidth(),
+1627  7: horizontalArrangement = Arrangement.spacedBy(6.dp)
+1628  8: ) {
+1629  9: listOf(0 to "0% (Clear)", 35 to "35%", 70 to "70%", 100 to "100%").forEach { (value, label) ->
+1630  9: AssistChip(
+1631  9: onClick = { viewModel.setPanelOpacityPercent(value) },
+1632  9: label = { Text(label, style = MaterialTheme.typography.labelSmall, maxLines = 1) },
+1633  9: colors = if (panelOpacityPercent == value)
+1634  9: AssistChipDefaults.assistChipColors(containerColor = MaterialTheme.colorScheme.primaryContainer)
+1635  9: else
+1636  9: AssistChipDefaults.assistChipColors(),
+1637  9: modifier = Modifier.weight(1f)
+1638  9: )
+1639  8: }
+1640  7: }
+1641  6: }
+1642  6: 
+1643  6: Divider()
+1644  6: 
+1645  6: // 4. Grid Columns
+1646  7: Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+1647  7: Text("Grid Columns: $gridColumns", style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.Medium)
+1648  7: Slider(
+1649  7: value = gridColumns.toFloat(),
+1650  7: onValueChange = { viewModel.setGridColumns(it.toInt()) },
+1651  7: valueRange = 1f..4f,
+1652  7: steps = 2,
+1653  7: modifier = Modifier.fillMaxWidth()
+1654  7: )
+1655  6: }
+1656  5: }
+1657  4: }
+1658  4: 
+1659  4: // Permissions & Troubleshooting Card
+1660  5: Card(modifier = Modifier.fillMaxWidth()) {
+1661  6: Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+1662  6: Text("4. Permissions Status", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+1663  6: 
+1664  6: Row(
+1665  6: modifier = Modifier.fillMaxWidth(),
+1666  6: horizontalArrangement = Arrangement.SpaceBetween,
+1667  6: verticalAlignment = Alignment.CenterVertically
+1668  7: ) {
+1669  7: Text("Overlay Permission:", modifier = Modifier.weight(1f), style = MaterialTheme.typography.bodyMedium)
+1670  7: Spacer(modifier = Modifier.width(8.dp))
+1671  7: StatusBadge(
+1672  7: text = if (canDrawOverlays) "✓ Granted" else "✕ Missing",
+1673  7: isPositive = canDrawOverlays
+1674  7: )
+1675  6: }
+1676  7: if (!canDrawOverlays) {
+1677  8: Button(onClick = onRequestOverlayPermission, modifier = Modifier.fillMaxWidth()) {
+1678  8: Text("Grant Overlay Permission")
+1679  7: }
+1680  6: }
+1681  6: 
+1682  6: Row(
+1683  6: modifier = Modifier.fillMaxWidth(),
+1684  6: horizontalArrangement = Arrangement.SpaceBetween,
+1685  6: verticalAlignment = Alignment.CenterVertically
+1686  7: ) {
+1687  7: Text("Battery Optimization:", modifier = Modifier.weight(1f), style = MaterialTheme.typography.bodyMedium)
+1688  7: Spacer(modifier = Modifier.width(8.dp))
+1689  7: StatusBadge(
+1690  7: text = if (isIgnoringBatteryOptimizations) "✓ Optimal" else "Restricted",
+1691  7: isPositive = isIgnoringBatteryOptimizations
+1692  7: )
+1693  6: }
+1694  6: 
+1695  7: if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+1696  7: OutlinedButton(
+1697  8: onClick = {
+1698  9: try {
+1699 10: val intent = Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS).apply {
+1700 10: data = Uri.parse("package:${context.packageName}")
+1701  9: }
+1702  9: context.startActivity(intent)
+1703  9: } catch (e: Exception) {
+1704  9: Toast.makeText(context, "Could not open App Info", Toast.LENGTH_SHORT).show()
+1705  8: }
+1706  7: },
+1707  7: modifier = Modifier.fillMaxWidth()
+1708  8: ) {
+1709  8: Text("Open App Info (3 Dots ⋮ Menu)")
+1710  7: }
+1711  6: }
+1712  5: }
+1713  4: }
+1714  4: 
+1715  4: // Replay Setup Guide Button
+1716  4: OutlinedButton(
+1717  4: onClick = onOpenGuide,
+1718  4: modifier = Modifier.fillMaxWidth()
+1719  5: ) {
+1720  5: Icon(Icons.AutoMirrored.Filled.HelpOutline, contentDescription = null)
+1721  5: Spacer(Modifier.width(8.dp))
+1722  5: Text("Re-open Setup Walkthrough Guide")
+1723  4: }
+1724  4: 
+1725  4: Spacer(modifier = Modifier.height(32.dp))
+1726  3: }
+1727  2: }
+1728  2: 
+1729  2: /**
+1730  2: * In-App Interactive Simulator & Live Preview Overlay.
+1731  2: * Allows dumb-user testing of the sidebar, carousel direction, and copy flow
+1732  2: * completely inside the app, whether background overlay is running or not.
+1733  2: */
+1734  2: @OptIn(ExperimentalFoundationApi::class)
+1735  2: @Composable
+1736  2: fun InAppInteractiveSimulatorOverlay(

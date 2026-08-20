@@ -206,7 +206,7 @@ class OverlayService : Service(), LifecycleOwner, ViewModelStoreOwner, SavedStat
                         imageLoader = imageLoader, 
                         orientation = currentOri,
                         onUpdateGravity = {},
-                        onUpdateWindowParams = { expanded, triggerType, panelSide, shouldHide, swipeHeightPercent, isGuideActive ->
+                        onUpdateWindowParams = { expanded, triggerType, panelSide, shouldHide, isGuideActive, swipeHeightPercent ->
                             if (shouldHide) {
                                 composeView.visibility = View.GONE
                                 layoutParams.width = 0
@@ -229,7 +229,8 @@ class OverlayService : Service(), LifecycleOwner, ViewModelStoreOwner, SavedStat
                                         layoutParams.x = windowX
                                         layoutParams.y = windowY
                                     } else {
-                                        layoutParams.gravity = if (panelSide == PanelSide.LEFT) Gravity.START or Gravity.TOP else Gravity.END or Gravity.TOP
+                                        val horizontalGravity = if (panelSide == PanelSide.LEFT) Gravity.START else Gravity.END
+                                        layoutParams.gravity = horizontalGravity or Gravity.TOP
                                         val density = resources.displayMetrics.density
                                         layoutParams.width = if (isGuideActive) (24 * density).toInt() else (16 * density).toInt()
                                         val percent = (swipeHeightPercent.coerceIn(10, 100)) / 100f
@@ -288,7 +289,7 @@ fun OverlayContent(
     imageLoader: ImageLoader, 
     orientation: Int,
     onUpdateGravity: (PanelSide) -> Unit,
-    onUpdateWindowParams: (Boolean, TriggerType, PanelSide, Boolean, Int, Boolean) -> Unit,
+    onUpdateWindowParams: (Boolean, TriggerType, PanelSide, Boolean, Boolean, Int) -> Unit,
     onDragBubble: (Float, Float) -> Boolean,
     onCloseService: () -> Unit
 ) {
@@ -300,7 +301,11 @@ fun OverlayContent(
     val gridColumns by viewModel.gridColumns.collectAsState()
     val panelSide by viewModel.panelSide.collectAsState()
     val panelWidthState by viewModel.panelWidth.collectAsState()
+    val panelWidthPercent by viewModel.panelWidthPercent.collectAsState()
+    val panelHeightPercent by viewModel.panelHeightPercent.collectAsState()
+    val panelOpacityPercent by viewModel.panelOpacityPercent.collectAsState()
     val triggerType by viewModel.triggerType.collectAsState()
+    val scrollDirection by viewModel.scrollDirection.collectAsState()
     val hideInLandscape by viewModel.hideInLandscape.collectAsState()
     val swipeHeightPercent by viewModel.swipeHeightPercent.collectAsState()
     val guidePreviewUntil by viewModel.guidePreviewUntil.collectAsState()
@@ -321,21 +326,12 @@ fun OverlayContent(
     val shouldHide = isLandscape && hideInLandscape && !expanded
 
     fun toggleExpand(expand: Boolean) {
-        if (expand) {
-            viewModel.loadImages()
-        }
-        onUpdateWindowParams(expand, triggerType, panelSide, shouldHide, swipeHeightPercent, isGuideActive)
+        onUpdateWindowParams(expand, triggerType, panelSide, shouldHide, isGuideActive, swipeHeightPercent)
         expanded = expand
     }
 
-    LaunchedEffect(expanded) {
-        if (expanded) {
-            viewModel.loadImages()
-        }
-    }
-
-    LaunchedEffect(expanded, triggerType, panelSide, shouldHide, swipeHeightPercent, isGuideActive) {
-        onUpdateWindowParams(expanded, triggerType, panelSide, shouldHide, swipeHeightPercent, isGuideActive)
+    LaunchedEffect(expanded, triggerType, panelSide, shouldHide, isGuideActive, panelWidthPercent, swipeHeightPercent, panelHeightPercent) {
+        onUpdateWindowParams(expanded, triggerType, panelSide, shouldHide, isGuideActive, swipeHeightPercent)
     }
 
     LaunchedEffect(itemToDelete) {
@@ -361,13 +357,9 @@ fun OverlayContent(
 
     if (shouldHide) return
 
-    val widthFraction = when (panelWidthState) {
-        PanelWidth.THIRD -> 3f
-        PanelWidth.HALF -> 2f
-        PanelWidth.TWO_THIRDS -> 1.5f
-    }
-    
-    val expandedWidthDp = (context.resources.displayMetrics.widthPixels / context.resources.displayMetrics.density / widthFraction).dp
+    val totalWidthDp = context.resources.displayMetrics.widthPixels / context.resources.displayMetrics.density
+    val expandedWidthDp = (totalWidthDp * (panelWidthPercent.coerceIn(20, 100) / 100f)).dp
+    val expandedHeightFraction = (panelHeightPercent.coerceIn(20, 100)) / 100f
     val isEdgeSwipe = triggerType == TriggerType.EDGE_SWIPE
 
     var baseModifier = if (expanded) {
@@ -461,16 +453,17 @@ fun OverlayContent(
                 }
             } else {
                 if (isGuideActive) {
+                    val guideShape = if (panelSide == PanelSide.LEFT) {
+                        RoundedCornerShape(topEnd = 0.dp, bottomEnd = 16.dp)
+                    } else {
+                        RoundedCornerShape(topStart = 0.dp, bottomStart = 16.dp)
+                    }
+
                     // Visually distinctive, semi-transparent light-blue glowing guide bar showing trigger area
                     Box(
                         modifier = Modifier
                             .fillMaxSize()
-                            .clip(
-                                if (panelSide == PanelSide.LEFT)
-                                    RoundedCornerShape(topEnd = 0.dp, bottomEnd = 16.dp)
-                                else
-                                    RoundedCornerShape(topStart = 0.dp, bottomStart = 16.dp)
-                            )
+                            .clip(guideShape)
                             .background(
                                 Brush.verticalGradient(
                                     colors = listOf(
@@ -482,10 +475,7 @@ fun OverlayContent(
                             .border(
                                 width = 1.5.dp,
                                 color = Color(0xFFBAE6FD).copy(alpha = 0.9f),
-                                shape = if (panelSide == PanelSide.LEFT)
-                                    RoundedCornerShape(topEnd = 0.dp, bottomEnd = 16.dp)
-                                else
-                                    RoundedCornerShape(topStart = 0.dp, bottomStart = 16.dp)
+                                shape = guideShape
                             ),
                         contentAlignment = Alignment.Center
                     ) {
@@ -515,17 +505,18 @@ fun OverlayContent(
             }
         } else {
             // Expanded Sidebar
+            val opacityAlpha = (panelOpacityPercent.coerceIn(0, 100)) / 100f
             Surface(
                 modifier = Modifier
-                    .fillMaxHeight()
+                    .fillMaxHeight(expandedHeightFraction)
                     .width(expandedWidthDp)
-                    .align(if (panelSide == PanelSide.LEFT) Alignment.CenterStart else Alignment.CenterEnd)
+                    .align(if (panelSide == PanelSide.LEFT) Alignment.TopStart else Alignment.TopEnd)
                     .border(
                         1.dp, 
-                        MaterialTheme.colorScheme.outline.copy(alpha = 0.5f), 
-                        if (panelSide == PanelSide.LEFT) RoundedCornerShape(topEnd = 16.dp, bottomEnd = 16.dp) else RoundedCornerShape(topStart = 16.dp, bottomStart = 16.dp)
+                        MaterialTheme.colorScheme.outline.copy(alpha = opacityAlpha * 0.5f), 
+                        if (panelSide == PanelSide.LEFT) RoundedCornerShape(bottomEnd = 16.dp) else RoundedCornerShape(bottomStart = 16.dp)
                     )
-                    .clip(if (panelSide == PanelSide.LEFT) RoundedCornerShape(topEnd = 16.dp, bottomEnd = 16.dp) else RoundedCornerShape(topStart = 16.dp, bottomStart = 16.dp))
+                    .clip(if (panelSide == PanelSide.LEFT) RoundedCornerShape(bottomEnd = 16.dp) else RoundedCornerShape(bottomStart = 16.dp))
                     .clickable(
                         interactionSource = remember { androidx.compose.foundation.interaction.MutableInteractionSource() },
                         indication = null
@@ -534,7 +525,7 @@ fun OverlayContent(
                             itemToDelete = null
                         }
                     },
-                color = MaterialTheme.colorScheme.surface.copy(alpha = 0.95f),
+                color = MaterialTheme.colorScheme.surface.copy(alpha = opacityAlpha),
                 contentColor = MaterialTheme.colorScheme.onSurface
             ) {
                 val images by viewModel.images.collectAsState()
@@ -558,6 +549,7 @@ fun OverlayContent(
                         } else {
                             LazyVerticalGrid(
                                 columns = GridCells.Fixed(gridColumns),
+                                reverseLayout = scrollDirection == ScrollDirection.TOP_TO_BOTTOM,
                                 contentPadding = PaddingValues(4.dp),
                                 modifier = Modifier.fillMaxSize()
                             ) {
@@ -625,7 +617,14 @@ fun OverlayContent(
                             horizontalArrangement = Arrangement.SpaceEvenly,
                             verticalAlignment = Alignment.CenterVertically
                         ) {
-                            IconButton(onClick = { viewModel.loadImages() }) {
+                            IconButton(onClick = {
+                                scope.launch {
+                                    toggleExpand(false)
+                                    viewModel.loadImages()
+                                    kotlinx.coroutines.delay(200)
+                                    toggleExpand(true)
+                                }
+                            }) {
                                 Icon(imageVector = Icons.Default.Refresh, contentDescription = "Refresh", tint = MaterialTheme.colorScheme.onSurface)
                             }
                             IconButton(onClick = {

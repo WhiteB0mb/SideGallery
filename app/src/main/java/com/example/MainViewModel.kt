@@ -33,6 +33,7 @@ enum class SortOption {
 }
 
 enum class TriggerType { EDGE_SWIPE, FLOATING_BUTTON }
+enum class ScrollDirection { TOP_TO_BOTTOM, BOTTOM_TO_TOP }
 enum class PanelSide { LEFT, RIGHT }
 enum class PanelWidth { THIRD, HALF, TWO_THIRDS }
 enum class ThemeMode { SYSTEM, LIGHT, DARK }
@@ -43,6 +44,9 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     private val _selectedFolderUri = MutableStateFlow<Uri?>(null)
     val selectedFolderUri: StateFlow<Uri?> = _selectedFolderUri.asStateFlow()
+
+    private val _hasCompletedOnboarding = MutableStateFlow(false)
+    val hasCompletedOnboarding: StateFlow<Boolean> = _hasCompletedOnboarding.asStateFlow()
 
     private val _themeMode = MutableStateFlow(ThemeMode.SYSTEM)
     val themeMode: StateFlow<ThemeMode> = _themeMode.asStateFlow()
@@ -62,6 +66,9 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     private val _triggerType = MutableStateFlow(TriggerType.EDGE_SWIPE)
     val triggerType: StateFlow<TriggerType> = _triggerType.asStateFlow()
 
+    private val _scrollDirection = MutableStateFlow(ScrollDirection.TOP_TO_BOTTOM)
+    val scrollDirection: StateFlow<ScrollDirection> = _scrollDirection.asStateFlow()
+
     private val _swipeHeightPercent = MutableStateFlow(70)
     val swipeHeightPercent: StateFlow<Int> = _swipeHeightPercent.asStateFlow()
 
@@ -74,6 +81,15 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     private val _panelWidth = MutableStateFlow(PanelWidth.THIRD)
     val panelWidth: StateFlow<PanelWidth> = _panelWidth.asStateFlow()
 
+    private val _panelWidthPercent = MutableStateFlow(33)
+    val panelWidthPercent: StateFlow<Int> = _panelWidthPercent.asStateFlow()
+
+    private val _panelHeightPercent = MutableStateFlow(100)
+    val panelHeightPercent: StateFlow<Int> = _panelHeightPercent.asStateFlow()
+
+    private val _panelOpacityPercent = MutableStateFlow(95)
+    val panelOpacityPercent: StateFlow<Int> = _panelOpacityPercent.asStateFlow()
+
     private val _isLoading = MutableStateFlow(false)
     val isLoading: StateFlow<Boolean> = _isLoading.asStateFlow()
 
@@ -81,14 +97,24 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     private val prefsListener = SharedPreferences.OnSharedPreferenceChangeListener { sharedPreferences, key ->
         when (key) {
+            "has_completed_onboarding" -> _hasCompletedOnboarding.value = sharedPreferences.getBoolean("has_completed_onboarding", false)
             "grid_columns" -> _gridColumns.value = sharedPreferences.getInt("grid_columns", 2)
             "trigger_type" -> _triggerType.value = TriggerType.valueOf(sharedPreferences.getString("trigger_type", TriggerType.EDGE_SWIPE.name) ?: TriggerType.EDGE_SWIPE.name)
+            "scroll_direction" -> _scrollDirection.value = ScrollDirection.valueOf(sharedPreferences.getString("scroll_direction", ScrollDirection.TOP_TO_BOTTOM.name) ?: ScrollDirection.TOP_TO_BOTTOM.name)
             "swipe_height_percent" -> _swipeHeightPercent.value = sharedPreferences.getInt("swipe_height_percent", 70)
             "guide_preview_until" -> _guidePreviewUntil.value = sharedPreferences.getLong("guide_preview_until", 0L)
             "panel_side" -> _panelSide.value = PanelSide.valueOf(sharedPreferences.getString("panel_side", PanelSide.RIGHT.name) ?: PanelSide.RIGHT.name)
             "panel_width" -> _panelWidth.value = PanelWidth.valueOf(sharedPreferences.getString("panel_width", PanelWidth.THIRD.name) ?: PanelWidth.THIRD.name)
+            "panel_width_percent" -> _panelWidthPercent.value = sharedPreferences.getInt("panel_width_percent", 33)
+            "panel_height_percent" -> _panelHeightPercent.value = sharedPreferences.getInt("panel_height_percent", 100)
+            "panel_opacity_percent" -> _panelOpacityPercent.value = sharedPreferences.getInt("panel_opacity_percent", 95)
             "theme_mode" -> _themeMode.value = ThemeMode.valueOf(sharedPreferences.getString("theme_mode", ThemeMode.SYSTEM.name) ?: ThemeMode.SYSTEM.name)
             "hide_in_landscape" -> _hideInLandscape.value = sharedPreferences.getBoolean("hide_in_landscape", false)
+            "sort_option" -> {
+                val opt = SortOption.valueOf(sharedPreferences.getString("sort_option", SortOption.DATE_NEWEST.name) ?: SortOption.DATE_NEWEST.name)
+                _sortOption.value = opt
+                applySorting()
+            }
             "last_media_update" -> loadImages()
             "folder_uri" -> {
                 val uriStr = sharedPreferences.getString("folder_uri", null)
@@ -110,15 +136,27 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             registerContentObserver(parsed)
         }
         
+        _hasCompletedOnboarding.value = prefs.getBoolean("has_completed_onboarding", false)
+
         val savedSort = prefs.getString("sort_option", SortOption.DATE_NEWEST.name)
         _sortOption.value = SortOption.valueOf(savedSort ?: SortOption.DATE_NEWEST.name)
 
         _gridColumns.value = prefs.getInt("grid_columns", 2)
         _triggerType.value = TriggerType.valueOf(prefs.getString("trigger_type", TriggerType.EDGE_SWIPE.name) ?: TriggerType.EDGE_SWIPE.name)
+        _scrollDirection.value = ScrollDirection.valueOf(prefs.getString("scroll_direction", ScrollDirection.TOP_TO_BOTTOM.name) ?: ScrollDirection.TOP_TO_BOTTOM.name)
         _swipeHeightPercent.value = prefs.getInt("swipe_height_percent", 70)
         _guidePreviewUntil.value = prefs.getLong("guide_preview_until", 0L)
         _panelSide.value = PanelSide.valueOf(prefs.getString("panel_side", PanelSide.RIGHT.name) ?: PanelSide.RIGHT.name)
-        _panelWidth.value = PanelWidth.valueOf(prefs.getString("panel_width", PanelWidth.THIRD.name) ?: PanelWidth.THIRD.name)
+        val initialWidthEnum = PanelWidth.valueOf(prefs.getString("panel_width", PanelWidth.THIRD.name) ?: PanelWidth.THIRD.name)
+        _panelWidth.value = initialWidthEnum
+        val defaultWidthPercent = when (initialWidthEnum) {
+            PanelWidth.THIRD -> 33
+            PanelWidth.HALF -> 50
+            PanelWidth.TWO_THIRDS -> 66
+        }
+        _panelWidthPercent.value = prefs.getInt("panel_width_percent", defaultWidthPercent)
+        _panelHeightPercent.value = prefs.getInt("panel_height_percent", 100)
+        _panelOpacityPercent.value = prefs.getInt("panel_opacity_percent", 95)
         _themeMode.value = ThemeMode.valueOf(prefs.getString("theme_mode", ThemeMode.SYSTEM.name) ?: ThemeMode.SYSTEM.name)
         _hideInLandscape.value = prefs.getBoolean("hide_in_landscape", false)
 
@@ -187,19 +225,51 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun setHideInLandscape(hide: Boolean) {
+        _hideInLandscape.value = hide
         prefs.edit().putBoolean("hide_in_landscape", hide).apply()
     }
 
     fun setThemeMode(mode: ThemeMode) {
+        _themeMode.value = mode
         prefs.edit().putString("theme_mode", mode.name).apply()
     }
 
     fun setGridColumns(columns: Int) {
+        _gridColumns.value = columns
         prefs.edit().putInt("grid_columns", columns).apply()
     }
 
     fun setTriggerType(type: TriggerType) {
+        _triggerType.value = type
         prefs.edit().putString("trigger_type", type.name).apply()
+        triggerGuidePreview(2500L)
+    }
+
+    fun setScrollDirection(direction: ScrollDirection) {
+        _scrollDirection.value = direction
+        prefs.edit().putString("scroll_direction", direction.name).apply()
+    }
+
+    fun completeOnboarding() {
+        _hasCompletedOnboarding.value = true
+        prefs.edit().putBoolean("has_completed_onboarding", true).apply()
+    }
+
+    fun resetOnboarding() {
+        _hasCompletedOnboarding.value = false
+        prefs.edit().putBoolean("has_completed_onboarding", false).apply()
+    }
+
+    fun setPanelHeightPercent(percent: Int) {
+        val clamped = percent.coerceIn(20, 100)
+        _panelHeightPercent.value = clamped
+        prefs.edit().putInt("panel_height_percent", clamped).apply()
+    }
+
+    fun setPanelOpacityPercent(percent: Int) {
+        val clamped = percent.coerceIn(0, 100)
+        _panelOpacityPercent.value = clamped
+        prefs.edit().putInt("panel_opacity_percent", clamped).apply()
     }
 
     fun setSwipeHeightPercent(percent: Int, showGuide: Boolean = true) {
@@ -207,7 +277,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         _swipeHeightPercent.value = clamped
         prefs.edit().putInt("swipe_height_percent", clamped).apply()
         if (showGuide) {
-            triggerGuidePreview(3000L)
+            triggerGuidePreview(2500L)
         }
     }
 
@@ -218,11 +288,38 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     }
     
     fun setPanelSide(side: PanelSide) {
+        _panelSide.value = side
         prefs.edit().putString("panel_side", side.name).apply()
+        triggerGuidePreview(2500L)
     }
     
     fun setPanelWidth(width: PanelWidth) {
-        prefs.edit().putString("panel_width", width.name).apply()
+        _panelWidth.value = width
+        val percent = when (width) {
+            PanelWidth.THIRD -> 33
+            PanelWidth.HALF -> 50
+            PanelWidth.TWO_THIRDS -> 66
+        }
+        _panelWidthPercent.value = percent
+        prefs.edit()
+            .putString("panel_width", width.name)
+            .putInt("panel_width_percent", percent)
+            .apply()
+    }
+
+    fun setPanelWidthPercent(percent: Int) {
+        val clamped = percent.coerceIn(20, 100)
+        _panelWidthPercent.value = clamped
+        val matchingEnum = when {
+            clamped <= 40 -> PanelWidth.THIRD
+            clamped <= 58 -> PanelWidth.HALF
+            else -> PanelWidth.TWO_THIRDS
+        }
+        _panelWidth.value = matchingEnum
+        prefs.edit()
+            .putInt("panel_width_percent", clamped)
+            .putString("panel_width", matchingEnum.name)
+            .apply()
     }
 
     fun setFolderUri(uri: Uri) {
@@ -275,12 +372,31 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                         val sizeCol = cursor.getColumnIndex(DocumentsContract.Document.COLUMN_SIZE)
 
                         while (cursor.moveToNext()) {
-                            val mimeType = if (mimeCol != -1) cursor.getString(mimeCol) else null
+                            var mimeType = if (mimeCol != -1) cursor.getString(mimeCol) else null
+                            val name = if (nameCol != -1) cursor.getString(nameCol) ?: "" else ""
+                            
+                            val isImageByExtension = name.lowercase().endsWith(".jpg") || name.lowercase().endsWith(".jpeg") || 
+                                                     name.lowercase().endsWith(".png") || name.lowercase().endsWith(".gif") || 
+                                                     name.lowercase().endsWith(".webp")
+                            
+                            if (mimeType == null || (!mimeType.startsWith("image/") && isImageByExtension)) {
+                                mimeType = if (name.lowercase().endsWith(".gif")) "image/gif" else "image/jpeg"
+                            }
+
                             if (mimeType != null && mimeType.startsWith("image/")) {
                                 val itemDocId = if (idCol != -1) cursor.getString(idCol) else continue
                                 val fileUri = DocumentsContract.buildDocumentUriUsingTree(uri, itemDocId)
                                 val name = if (nameCol != -1) cursor.getString(nameCol) ?: "" else ""
-                                val mod = if (modCol != -1) cursor.getLong(modCol) else 0L
+                                var mod = if (modCol != -1) cursor.getLong(modCol) else 0L
+                                val match = Regex("imported_(\\d+)").find(name)
+                                if (match != null) {
+                                    val timeFromName = match.groupValues[1].toLongOrNull()
+                                    if (timeFromName != null && timeFromName > 0) {
+                                        mod = timeFromName
+                                    }
+                                } else if (mod == 0L) {
+                                    mod = System.currentTimeMillis() // Fallback so it appears at top if we can't read date
+                                }
                                 val size = if (sizeCol != -1) cursor.getLong(sizeCol) else 0L
 
                                 items.add(
@@ -307,11 +423,22 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     documentFile?.listFiles()?.forEach { file ->
                         val mimeType = file.type
                         if (mimeType != null && mimeType.startsWith("image/")) {
+                            val name = file.name ?: ""
+                            var mod = file.lastModified()
+                            val match = Regex("imported_(\\d+)").find(name)
+                            if (match != null) {
+                                val timeFromName = match.groupValues[1].toLongOrNull()
+                                if (timeFromName != null && timeFromName > 0) {
+                                    mod = timeFromName
+                                }
+                            } else if (mod == 0L) {
+                                mod = System.currentTimeMillis() // Fallback so it appears at top
+                            }
                             items.add(
                                 GalleryItem(
                                     uri = file.uri,
-                                    name = file.name ?: "",
-                                    dateModified = file.lastModified(),
+                                    name = name,
+                                    dateModified = mod,
                                     size = file.length(),
                                     isGif = mimeType == "image/gif"
                                 )
@@ -335,13 +462,41 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 val folder = DocumentFile.fromTreeUri(context, folderUri) ?: return@withContext
                 for (uri in uris) {
                     try {
-                        val mimeType = context.contentResolver.getType(uri) ?: "image/jpeg"
-                        val ext = when {
-                            mimeType.contains("gif") -> "gif"
-                            mimeType.contains("png") -> "png"
-                            mimeType.contains("webp") -> "webp"
-                            else -> "jpg"
+                        var mimeType = context.contentResolver.getType(uri) ?: "image/jpeg"
+                        var ext = "jpg"
+                        context.contentResolver.query(uri, null, null, null, null)?.use { cursor ->
+                            if (cursor.moveToFirst()) {
+                                val nameIndex = cursor.getColumnIndex(android.provider.OpenableColumns.DISPLAY_NAME)
+                                if (nameIndex != -1) {
+                                    val originalName = cursor.getString(nameIndex)
+                                    if (originalName != null) {
+                                        if (originalName.lowercase().endsWith(".gif")) {
+                                            mimeType = "image/gif"
+                                            ext = "gif"
+                                        } else if (originalName.lowercase().endsWith(".png")) {
+                                            mimeType = "image/png"
+                                            ext = "png"
+                                        } else if (originalName.lowercase().endsWith(".webp")) {
+                                            mimeType = "image/webp"
+                                            ext = "webp"
+                                        } else if (originalName.lowercase().endsWith(".jpg") || originalName.lowercase().endsWith(".jpeg")) {
+                                            mimeType = "image/jpeg"
+                                            ext = "jpg"
+                                        }
+                                    }
+                                }
+                            }
                         }
+                        
+                        if (ext == "jpg") {
+                            ext = when {
+                                mimeType.contains("gif") -> "gif"
+                                mimeType.contains("png") -> "png"
+                                mimeType.contains("webp") -> "webp"
+                                else -> "jpg"
+                            }
+                        }
+                        
                         val fileName = "imported_${System.currentTimeMillis()}.$ext"
                         val newFile = folder.createFile(mimeType, fileName)
                         if (newFile != null) {
