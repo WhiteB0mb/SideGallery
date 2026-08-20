@@ -322,20 +322,14 @@ fun OnboardingScreen(
                         horizontalAlignment = Alignment.CenterHorizontally,
                         verticalArrangement = Arrangement.spacedBy(16.dp)
                     ) {
-                        Surface(
-                            shape = CircleShape,
-                            color = MaterialTheme.colorScheme.primaryContainer,
-                            modifier = Modifier.size(88.dp)
-                        ) {
-                            Box(contentAlignment = Alignment.Center) {
-                                Icon(
-                                    imageVector = Icons.Default.Image,
-                                    contentDescription = "SideGallery",
-                                    tint = MaterialTheme.colorScheme.primary,
-                                    modifier = Modifier.size(48.dp)
-                                )
-                            }
-                        }
+                        // <-- METTI QUESTO AL POSTO DEL VECCHIO SURFACE CON L'ICONA -->
+                        Image(
+                            painter = painterResource(id = R.drawable.ic_launcher),
+                            contentDescription = "SideGallery App Icon",
+                            modifier = Modifier
+                                .size(88.dp)
+                                .clip(RoundedCornerShape(20.dp))
+                        )
 
                         Text(
                             text = "Welcome to SideGallery!",
