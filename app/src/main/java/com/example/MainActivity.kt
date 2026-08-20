@@ -58,10 +58,7 @@ import androidx.lifecycle.compose.LocalLifecycleOwner
 import coil.compose.AsyncImage
 import com.example.ui.theme.MyApplicationTheme
 import kotlinx.coroutines.launch
-import androidx.compose.foundation.Image
-import androidx.compose.ui.layout.ContentScale
-import androidx.compose.material3.ColorFilter
-import androidx.compose.ui.res.painterResource
+
 
 class MainActivity : ComponentActivity() {
 
@@ -331,11 +328,11 @@ fun OnboardingScreen(
                             modifier = Modifier.size(88.dp)
                         ) {
                             Box(contentAlignment = Alignment.Center) {
-                                Image(
-                                    painter = painterResource(id = R.drawable.ic_launcher),
+                                Icon(
+                                    imageVector = Icons.Default.Image,
                                     contentDescription = "SideGallery",
-                                    modifier = Modifier.size(48.dp),
-                                    colorFilter = ColorFilter.tint(MaterialTheme.colorScheme.primary)
+                                    tint = MaterialTheme.colorScheme.primary,
+                                    modifier = Modifier.size(48.dp)
                                 )
                             }
                         }
