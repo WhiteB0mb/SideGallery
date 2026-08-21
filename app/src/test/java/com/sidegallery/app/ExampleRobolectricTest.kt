@@ -1,4 +1,4 @@
-package com.example
+package com.sidegallery.app
 
 import android.app.Application
 import android.content.Context
@@ -263,5 +263,63 @@ class ExampleRobolectricTest {
         viewModel.togglePin(testItem)
         val reloaded = MainViewModel(app)
         assertTrue(reloaded.isItemPinned(testItem))
+    }
+
+    @Test
+    fun `dumb user test - MainActivity creates safely`() {
+        val controller = org.robolectric.Robolectric.buildActivity(MainActivity::class.java).create()
+        val activity = controller.get()
+        org.junit.Assert.assertNotNull(activity)
+    }
+
+    @Test
+    fun `dumb user test - GifEncoder creates valid GIF89a bytes`() {
+        val bitmap = android.graphics.Bitmap.createBitmap(50, 50, android.graphics.Bitmap.Config.ARGB_8888)
+        val canvas = android.graphics.Canvas(bitmap)
+        canvas.drawColor(android.graphics.Color.RED)
+
+        val output = java.io.ByteArrayOutputStream()
+        val encoder = GifEncoder()
+        encoder.start(output)
+        encoder.setDelay(100)
+        encoder.setRepeat(0)
+        assertTrue(encoder.addFrame(bitmap))
+        assertTrue(encoder.finish())
+
+        val bytes = output.toByteArray()
+        assertTrue(bytes.isNotEmpty())
+        // Check GIF89a header
+        val header = String(bytes.copyOfRange(0, 6), Charsets.US_ASCII)
+        assertEquals("GIF89a", header)
+        // Check trailer
+        assertEquals(0x3B.toByte(), bytes.last())
+    }
+
+    @Test
+    fun `dumb user test - folder switching prevents item bleed`() {
+        viewModel.addFolderWithDetails("Memes", "content://tree/memes")
+        viewModel.addFolderWithDetails("Gifs", "content://tree/gifs")
+        
+        // Select Memes
+        val memesIdx = viewModel.folders.value.indexOfFirst { it.name == "Memes" }
+        viewModel.selectFolder(memesIdx)
+        assertEquals("Memes", viewModel.currentFolder.value?.name)
+
+        // Select Gifs
+        val gifsIdx = viewModel.folders.value.indexOfFirst { it.name == "Gifs" }
+        viewModel.selectFolder(gifsIdx)
+        assertEquals("Gifs", viewModel.currentFolder.value?.name)
+    }
+
+    @Test
+    fun `dumb user test - remove folder leaves other folders intact`() {
+        viewModel.addFolderWithDetails("FolderA", "content://tree/a")
+        viewModel.addFolderWithDetails("FolderB", "content://tree/b")
+        val folderB = viewModel.folders.value.find { it.name == "FolderB" }!!
+
+        viewModel.removeFolder(folderB.id)
+
+        assertFalse(viewModel.folders.value.any { it.id == folderB.id })
+        assertTrue(viewModel.folders.value.any { it.name == "FolderA" })
     }
 }

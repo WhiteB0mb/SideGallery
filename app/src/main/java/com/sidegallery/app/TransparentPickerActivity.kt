@@ -1,4 +1,4 @@
-package com.example
+package com.sidegallery.app
 
 import android.os.Bundle
 import android.widget.Toast
@@ -13,16 +13,16 @@ class TransparentPickerActivity : ComponentActivity() {
 
     private val mediaPicker = registerForActivityResult(ActivityResultContracts.PickMultipleVisualMedia()) { uris ->
         if (uris.isNotEmpty()) {
-            val viewModel = ViewModelProvider(
-                this,
-                ViewModelProvider.AndroidViewModelFactory.getInstance(application)
-            )[MainViewModel::class.java]
-            
-            val targetFolder = targetFolderId?.let { id ->
-                viewModel.folders.value.find { it.id == id }
+            val service = OverlayService.activeInstance
+            if (service != null) {
+                service.viewModel.importMedia(applicationContext, uris, targetFolderId = targetFolderId)
+            } else {
+                val vm = ViewModelProvider(
+                    this,
+                    ViewModelProvider.AndroidViewModelFactory.getInstance(application)
+                )[MainViewModel::class.java]
+                vm.importMedia(applicationContext, uris, targetFolderId = targetFolderId)
             }
-            
-            viewModel.importMedia(applicationContext, uris, targetFolder)
             Toast.makeText(this, "Importing ${uris.size} file(s)...", Toast.LENGTH_SHORT).show()
         }
         finish()

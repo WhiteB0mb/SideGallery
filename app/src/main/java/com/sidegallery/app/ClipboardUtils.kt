@@ -1,4 +1,4 @@
-package com.example
+package com.sidegallery.app
 
 import android.content.ClipData
 import android.content.ClipboardManager
@@ -15,7 +15,7 @@ import java.io.InputStream
 
 object ClipboardUtils {
     
-    private fun prepareCacheFile(context: Context, sourceUri: Uri): Pair<File, String>? {
+    private suspend fun prepareCacheFile(context: Context, sourceUri: Uri): Pair<File, String>? {
         try {
             val sharedFolder = File(context.cacheDir, "shared_media")
             if (!sharedFolder.exists()) {
@@ -29,7 +29,21 @@ object ClipboardUtils {
                 }
             }
 
-            val mimeType = context.contentResolver.getType(sourceUri) ?: ""
+            var mimeType = context.contentResolver.getType(sourceUri) ?: ""
+            val uriStringLower = sourceUri.toString().lowercase()
+            if (mimeType.isBlank()) {
+                mimeType = when {
+                    uriStringLower.endsWith(".gif") || uriStringLower.contains("gif") -> "image/gif"
+                    uriStringLower.endsWith(".webp") || uriStringLower.contains("webp") -> "image/webp"
+                    uriStringLower.endsWith(".png") || uriStringLower.contains("png") -> "image/png"
+                    uriStringLower.endsWith(".mp4") || uriStringLower.contains("mp4") -> "video/mp4"
+                    uriStringLower.endsWith(".webm") || uriStringLower.contains("webm") -> "video/webm"
+                    uriStringLower.endsWith(".mkv") || uriStringLower.contains("mkv") -> "video/x-matroska"
+                    uriStringLower.endsWith(".mov") || uriStringLower.contains("mov") -> "video/quicktime"
+                    else -> "image/jpeg"
+                }
+            }
+
             val extension = when {
                 mimeType.contains("gif") -> ".gif"
                 mimeType.contains("webp") -> ".webp"
@@ -43,13 +57,25 @@ object ClipboardUtils {
                 else -> ".jpg"
             }
             
+            val isVideo = mimeType.startsWith("video/") || extension == ".mp4" || extension == ".webm" || extension == ".mov" || extension == ".mkv"
+            
+            // If it's a video, convert up to 15s into animated GIF so it pastes into all messaging apps
+            if (isVideo) {
+                val gifFile = File(sharedFolder, "gif_clip_${System.currentTimeMillis()}.gif")
+                val success = GifConverter.convertVideoToGif(context, sourceUri, gifFile, targetWidth = 320, fps = 8)
+                if (success && gifFile.exists()) {
+                    return Pair(gifFile, "image/gif")
+                }
+            }
+
             val destFile = File(sharedFolder, "media_${System.currentTimeMillis()}$extension")
             val inputStream: InputStream? = context.contentResolver.openInputStream(sourceUri)
             if (inputStream != null) {
-                val outputStream = FileOutputStream(destFile)
-                inputStream.copyTo(outputStream)
-                inputStream.close()
-                outputStream.close()
+                inputStream.use { input ->
+                    FileOutputStream(destFile).use { output ->
+                        input.copyTo(output)
+                    }
+                }
                 val finalMime = if (mimeType.isNotBlank()) mimeType else if (extension == ".mp4") "video/mp4" else "image/jpeg"
                 return Pair(destFile, finalMime)
             }
@@ -84,7 +110,11 @@ object ClipboardUtils {
                     val clip = ClipData.newUri(context.contentResolver, label, fileUri)
                     clipboard.setPrimaryClip(clip)
                     
-                    val toastMsg = if (mimeType.startsWith("video/")) "Video copied to clipboard!" else "Image copied to clipboard!"
+                    val toastMsg = when {
+                        mimeType == "image/gif" -> "Copied to clipboard as animated GIF!"
+                        mimeType.startsWith("video/") -> "Video copied! (Tip: use 'Share via' for long videos in chat apps)"
+                        else -> "Image copied to clipboard!"
+                    }
                     Toast.makeText(context, toastMsg, Toast.LENGTH_SHORT).show()
                 }
             } catch (e: Exception) {

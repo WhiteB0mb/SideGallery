@@ -1,4 +1,4 @@
-package com.example
+package com.sidegallery.app
 
 import android.annotation.SuppressLint
 import android.app.NotificationChannel
@@ -116,7 +116,7 @@ import coil.compose.AsyncImage
 import coil.decode.GifDecoder
 import coil.decode.ImageDecoderDecoder
 import coil.decode.VideoFrameDecoder
-import com.example.ui.theme.SideGalleryTheme
+import com.sidegallery.app.ui.theme.SideGalleryTheme
 import com.sidegallery.app.R
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -128,6 +128,8 @@ class OverlayService : Service(), LifecycleOwner, ViewModelStoreOwner, SavedStat
         const val ACTION_STOP = "com.example.ACTION_STOP"
         private val _isRunning = MutableStateFlow(false)
         val isRunning: kotlinx.coroutines.flow.StateFlow<Boolean> = _isRunning.asStateFlow()
+        var activeInstance: OverlayService? = null
+            private set
     }
 
     private val currentOrientation = MutableStateFlow(Configuration.ORIENTATION_PORTRAIT)
@@ -147,12 +149,14 @@ class OverlayService : Service(), LifecycleOwner, ViewModelStoreOwner, SavedStat
         get() = lifecycleRegistry
 
     private var isOverlayAdded = false
-    private lateinit var viewModel: MainViewModel
+    lateinit var viewModel: MainViewModel
+        private set
     private var windowX = 0
     private var windowY = 100
 
     override fun onCreate() {
         super.onCreate()
+        activeInstance = this
         _isRunning.value = true
         currentOrientation.value = resources.configuration.orientation
         createNotificationChannel()
@@ -334,6 +338,9 @@ class OverlayService : Service(), LifecycleOwner, ViewModelStoreOwner, SavedStat
 
     override fun onDestroy() {
         super.onDestroy()
+        if (activeInstance == this) {
+            activeInstance = null
+        }
         _isRunning.value = false
         lifecycleRegistry.handleLifecycleEvent(Lifecycle.Event.ON_DESTROY)
         store.clear()
@@ -719,7 +726,7 @@ fun OverlayContent(
                                 }
                             }
                     ) {
-                        if (isLoading) {
+                        if (isLoading && images.isEmpty()) {
                             Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                                 CircularProgressIndicator(color = MaterialTheme.colorScheme.primary)
                             }
@@ -944,26 +951,28 @@ fun OverlayContent(
                             Box(
                                 modifier = Modifier
                                     .fillMaxSize()
-                                    .background(Color.Black.copy(alpha = 0.5f)),
+                                    .background(Color.Black.copy(alpha = 0.6f))
+                                    .clickable { itemToDeleteConfirm = null },
                                 contentAlignment = Alignment.Center
                             ) {
                                 Card(
                                     modifier = Modifier
-                                        .padding(16.dp)
-                                        .fillMaxWidth(0.9f),
+                                        .padding(12.dp)
+                                        .fillMaxWidth(0.95f)
+                                        .clickable(enabled = false) {},
                                     shape = RoundedCornerShape(16.dp),
                                     colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)
                                 ) {
                                     Column(
-                                        modifier = Modifier.padding(16.dp),
+                                        modifier = Modifier.padding(14.dp),
                                         horizontalAlignment = Alignment.CenterHorizontally,
-                                        verticalArrangement = Arrangement.spacedBy(12.dp)
+                                        verticalArrangement = Arrangement.spacedBy(10.dp)
                                     ) {
                                         Icon(
                                             imageVector = Icons.Default.Warning,
                                             contentDescription = null,
                                             tint = MaterialTheme.colorScheme.error,
-                                            modifier = Modifier.size(32.dp)
+                                            modifier = Modifier.size(28.dp)
                                         )
                                         Text(
                                             text = "Delete File?",
@@ -974,27 +983,31 @@ fun OverlayContent(
                                             text = "Are you sure you want to delete \"${deletingItem.name}\"? This action cannot be undone.",
                                             style = MaterialTheme.typography.bodySmall,
                                             textAlign = TextAlign.Center,
-                                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                            maxLines = 3,
+                                            overflow = TextOverflow.Ellipsis
                                         )
-                                        Row(
+                                        Column(
                                             modifier = Modifier.fillMaxWidth(),
-                                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                                            verticalArrangement = Arrangement.spacedBy(6.dp)
                                         ) {
-                                            OutlinedButton(
-                                                onClick = { itemToDeleteConfirm = null },
-                                                modifier = Modifier.weight(1f)
-                                            ) {
-                                                Text("Cancel")
-                                            }
                                             Button(
                                                 onClick = {
                                                     viewModel.deleteItem(context, deletingItem)
                                                     itemToDeleteConfirm = null
                                                 },
                                                 colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error),
-                                                modifier = Modifier.weight(1f)
+                                                contentPadding = PaddingValues(horizontal = 12.dp, vertical = 8.dp),
+                                                modifier = Modifier.fillMaxWidth()
                                             ) {
-                                                Text("Delete")
+                                                Text("Delete File", fontWeight = FontWeight.Bold)
+                                            }
+                                            OutlinedButton(
+                                                onClick = { itemToDeleteConfirm = null },
+                                                contentPadding = PaddingValues(horizontal = 12.dp, vertical = 8.dp),
+                                                modifier = Modifier.fillMaxWidth()
+                                            ) {
+                                                Text("Cancel")
                                             }
                                         }
                                     }
@@ -1016,9 +1029,13 @@ fun OverlayContent(
                             verticalAlignment = Alignment.CenterVertically
                         ) {
                             IconButton(onClick = {
-                                viewModel.loadImages()
+                                viewModel.refreshAllMedia()
+                                toggleExpand(false)
+                                android.os.Handler(android.os.Looper.getMainLooper()).postDelayed({
+                                    toggleExpand(true)
+                                }, 180)
                             }) {
-                                Icon(imageVector = Icons.Default.Refresh, contentDescription = "Refresh", tint = MaterialTheme.colorScheme.onSurface)
+                                Icon(imageVector = Icons.Default.Refresh, contentDescription = "Refresh & Reopen", tint = MaterialTheme.colorScheme.onSurface)
                             }
 
                             // Add Media to Current Folder

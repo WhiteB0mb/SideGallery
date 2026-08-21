@@ -1,4 +1,8 @@
 <?xml version="1.0" encoding="utf-8"?>
 <paths>
+    <cache-path name="cache" path="." />
+    <cache-path name="shared_media" path="shared_media/" />
     <cache-path name="shared_images" path="shared_images/" />
+    <external-cache-path name="external_cache" path="." />
+    <files-path name="files" path="." />
 </paths>

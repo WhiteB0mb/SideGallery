@@ -1,6 +1,6 @@
 {
   "name": "SideGallery",
-  "description": "An offline sidebar gallery overlay to quickly copy images and GIFs to clipboard.",
+  "description": "An offline sidebar gallery overlay to quickly copy images, GIFs, and videos to clipboard with multi-folder organization.",
   "requestFramePermissions": [],
   "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
 }

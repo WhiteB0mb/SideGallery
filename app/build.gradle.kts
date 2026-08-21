@@ -77,9 +77,10 @@ dependencies {
     // Storage (Storage Access Framework)
     implementation("androidx.documentfile:documentfile:1.0.1")
     
-    // Immagini & GIF (Coil)
+    // Immagini & GIF & Video (Coil)
     implementation(libs.coil.compose)
     implementation(libs.coil.gif)
+    implementation(libs.coil.video)
 
     // Coroutine
     implementation(libs.kotlinx.coroutines.android)

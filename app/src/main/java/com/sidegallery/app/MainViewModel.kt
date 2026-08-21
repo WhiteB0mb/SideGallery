@@ -1,4 +1,4 @@
-package com.example
+package com.sidegallery.app
 
 import android.app.Application
 import android.content.Context
@@ -10,10 +10,12 @@ import android.os.Handler
 import android.os.Looper
 import android.provider.DocumentsContract
 import android.provider.MediaStore
+import android.widget.Toast
 import androidx.documentfile.provider.DocumentFile
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -21,6 +23,7 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import org.json.JSONArray
 import org.json.JSONObject
+import java.io.File
 import java.util.UUID
 
 data class GalleryItem(
@@ -59,6 +62,9 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     private val prefs: SharedPreferences = application.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+
+    private val folderCache = java.util.concurrent.ConcurrentHashMap<String, List<GalleryItem>>()
+    private var loadJob: kotlinx.coroutines.Job? = null
 
     private val _folders = MutableStateFlow<List<GalleryFolder>>(emptyList())
     val folders: StateFlow<List<GalleryFolder>> = _folders.asStateFlow()
@@ -191,7 +197,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         list.add(
             GalleryFolder(
                 id = PINNED_FOLDER_ID,
-                name = "⭐ Pinned",
+                name = "Pinned",
                 uriString = "",
                 isSpecialPinned = true
             )
@@ -204,10 +210,12 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     val obj = array.getJSONObject(i)
                     val isSpecial = obj.optBoolean("isSpecialPinned", false)
                     if (!isSpecial) {
+                        val rawName = obj.getString("name")
+                        val cleanName = rawName.replace("⭐", "").replace("★", "").trim().ifBlank { "Media" }
                         list.add(
                             GalleryFolder(
                                 id = obj.getString("id"),
-                                name = obj.getString("name"),
+                                name = cleanName,
                                 uriString = obj.getString("uriString"),
                                 isSpecialPinned = false
                             )
@@ -244,7 +252,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         _selectedFolderUri.value = if (curr != null && !curr.isSpecialPinned && curr.uriString.isNotBlank()) Uri.parse(curr.uriString) else null
 
         registerAllObservers(list)
-        loadImages()
+        loadImages(showSpinnerIfCached = true)
+        preloadAllFolders()
     }
 
     private fun persistFolders(foldersList: List<GalleryFolder>) {
@@ -329,10 +338,14 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             doc?.name ?: "Folder ${_folders.value.count { !it.isSpecialPinned } + 1}"
         }
 
+        addFolderWithDetails(name, uri.toString())
+    }
+
+    fun addFolderWithDetails(name: String, uriString: String) {
         val newFolder = GalleryFolder(
             id = UUID.randomUUID().toString(),
             name = name,
-            uriString = uri.toString(),
+            uriString = uriString,
             isSpecialPinned = false
         )
 
@@ -343,7 +356,9 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
         // Select the newly added folder
         selectFolder(updated.size - 1)
-        prefs.edit().putString("folder_uri", uri.toString()).apply()
+        if (uriString.isNotBlank()) {
+            prefs.edit().putString("folder_uri", uriString).apply()
+        }
     }
 
     fun renameFolder(id: String, newName: String) {
@@ -380,7 +395,31 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         if (!folder.isSpecialPinned && folder.uriString.isNotBlank()) {
             prefs.edit().putString("folder_uri", folder.uriString).apply()
         }
-        loadImages()
+
+        // Instant UI transition from cache!
+        val cached = if (folder.isSpecialPinned) {
+            val pinnedSet = _pinnedItemUris.value
+            val allPinned = mutableListOf<GalleryItem>()
+            for (f in list.filter { !it.isSpecialPinned }) {
+                val fItems = folderCache[f.id] ?: emptyList()
+                allPinned.addAll(fItems.filter { pinnedSet.contains(it.uri.toString()) })
+            }
+            allPinned
+        } else {
+            folderCache[folder.id]
+        }
+
+        if (cached != null) {
+            _images.value = sortItemList(cached, _sortOption.value)
+            _isLoading.value = false
+        } else {
+            // Clear immediately when switching so previous folder items never bleed into new folder!
+            _images.value = emptyList()
+            _isLoading.value = true
+        }
+
+        // Asynchronously refresh in background so data is always completely up to date
+        loadImages(showSpinnerIfCached = false)
     }
 
     fun nextFolder() {
@@ -399,17 +438,35 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     // --- Pinned Items Management ---
 
+    fun isItemPinned(item: GalleryItem): Boolean {
+        return _pinnedItemUris.value.contains(item.uri.toString())
+    }
+
     fun togglePin(item: GalleryItem) {
         val currentSet = _pinnedItemUris.value.toMutableSet()
         val key = item.uri.toString()
-        if (currentSet.contains(key)) {
+        val willBePinned = if (currentSet.contains(key)) {
             currentSet.remove(key)
+            false
         } else {
             currentSet.add(key)
+            true
         }
         _pinnedItemUris.value = currentSet
         prefs.edit().putStringSet("pinned_items_set", currentSet).apply()
-        loadImages()
+
+        // Instantly update current list in memory
+        val updatedCurrent = _images.value.map {
+            if (it.uri == item.uri) it.copy(isPinned = willBePinned) else it
+        }
+        _images.value = sortItemList(updatedCurrent, _sortOption.value)
+
+        // Also update folder cache
+        folderCache.forEach { (folderId, items) ->
+            folderCache[folderId] = items.map {
+                if (it.uri == item.uri) it.copy(isPinned = willBePinned) else it
+            }
+        }
     }
 
     // --- Settings & UI Toggles ---
@@ -524,19 +581,28 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     // --- Loading & Querying (Images + Videos + Pinned) ---
 
-    fun loadImages() {
-        val currFolder = _currentFolder.value
+    fun loadImages(showSpinnerIfCached: Boolean = false) {
+        val currFolder = _currentFolder.value ?: return
+        val targetFolderId = currFolder.id
         val pinnedSet = _pinnedItemUris.value
         val context = getApplication<Application>()
-        _isLoading.value = true
+        
+        val isCached = if (currFolder.isSpecialPinned) {
+            folderCache.isNotEmpty()
+        } else {
+            folderCache.containsKey(currFolder.id)
+        }
 
-        viewModelScope.launch {
+        if (!isCached || showSpinnerIfCached) {
+            if (_images.value.isEmpty()) {
+                _isLoading.value = true
+            }
+        }
+
+        loadJob?.cancel()
+        loadJob = viewModelScope.launch {
             val loadedItems = withContext(Dispatchers.IO) {
                 val results = mutableListOf<GalleryItem>()
-
-                if (currFolder == null) {
-                    return@withContext results
-                }
 
                 if (currFolder.isSpecialPinned) {
                     // Load pinned items from all user folders
@@ -544,19 +610,48 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     for (f in regularFolders) {
                         val parsedUri = Uri.parse(f.uriString)
                         val folderItems = queryMediaFromFolder(context, parsedUri, f.id, pinnedSet)
+                        folderCache[f.id] = folderItems
                         results.addAll(folderItems.filter { it.isPinned })
                     }
                 } else if (currFolder.uriString.isNotBlank()) {
                     val parsedUri = Uri.parse(currFolder.uriString)
-                    results.addAll(queryMediaFromFolder(context, parsedUri, currFolder.id, pinnedSet))
+                    val folderItems = queryMediaFromFolder(context, parsedUri, currFolder.id, pinnedSet)
+                    folderCache[currFolder.id] = folderItems
+                    results.addAll(folderItems)
                 }
 
                 results
             }
 
-            _images.value = loadedItems
-            applySorting()
-            _isLoading.value = false
+            // Only apply to UI if this is still the active folder!
+            if (isActive && _currentFolder.value?.id == targetFolderId) {
+                _images.value = sortItemList(loadedItems, _sortOption.value)
+                _isLoading.value = false
+            }
+        }
+    }
+
+    fun refreshAllMedia() {
+        folderCache.clear()
+        _images.value = emptyList()
+        loadImages(showSpinnerIfCached = true)
+        preloadAllFolders()
+    }
+
+    fun preloadAllFolders() {
+        viewModelScope.launch(Dispatchers.IO) {
+            try {
+                val context = getApplication<Application>()
+                val pinnedSet = _pinnedItemUris.value
+                val regularFolders = _folders.value.filter { !it.isSpecialPinned && it.uriString.isNotBlank() }
+                for (f in regularFolders) {
+                    val parsedUri = Uri.parse(f.uriString)
+                    val folderItems = queryMediaFromFolder(context, parsedUri, f.id, pinnedSet)
+                    folderCache[f.id] = folderItems
+                }
+            } catch (e: Exception) {
+                e.printStackTrace()
+            }
         }
     }
 
@@ -701,20 +796,35 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         return items
     }
 
-    fun importMedia(context: Context, uris: List<Uri>, targetFolder: GalleryFolder? = null) {
-        val folderToUse = targetFolder ?: _currentFolder.value
+    fun importMedia(
+        context: Context,
+        uris: List<Uri>,
+        targetFolder: GalleryFolder? = null,
+        targetFolderId: String? = null
+    ) {
+        val folderToUse = targetFolder ?: run {
+            if (targetFolderId != null) {
+                _folders.value.find { it.id == targetFolderId }
+            } else {
+                _currentFolder.value
+            }
+        }
         if (folderToUse == null || folderToUse.isSpecialPinned || folderToUse.uriString.isBlank()) {
             return
         }
         val folderUri = Uri.parse(folderToUse.uriString)
 
         _isLoading.value = true
-        viewModelScope.launch {
-            withContext(Dispatchers.IO) {
-                val folder = DocumentFile.fromTreeUri(context, folderUri) ?: return@withContext
+        kotlinx.coroutines.CoroutineScope(Dispatchers.IO + kotlinx.coroutines.SupervisorJob()).launch {
+            var convertedGifsCount = 0
+            var importedImagesCount = 0
+
+            run {
+                val folder = DocumentFile.fromTreeUri(context, folderUri) ?: return@run
                 for (uri in uris) {
                     try {
                         var mimeType = context.contentResolver.getType(uri) ?: "image/jpeg"
+                        var isVideo = mimeType.startsWith("video/")
                         var ext = "jpg"
                         context.contentResolver.query(uri, null, null, null, null)?.use { cursor ->
                             if (cursor.moveToFirst()) {
@@ -724,41 +834,67 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                                     if (originalName != null) {
                                         val lower = originalName.lowercase()
                                         when {
-                                            lower.endsWith(".gif") -> { mimeType = "image/gif"; ext = "gif" }
-                                            lower.endsWith(".png") -> { mimeType = "image/png"; ext = "png" }
-                                            lower.endsWith(".webp") -> { mimeType = "image/webp"; ext = "webp" }
-                                            lower.endsWith(".mp4") -> { mimeType = "video/mp4"; ext = "mp4" }
-                                            lower.endsWith(".webm") -> { mimeType = "video/webm"; ext = "webm" }
-                                            lower.endsWith(".mkv") -> { mimeType = "video/x-matroska"; ext = "mkv" }
-                                            lower.endsWith(".mov") -> { mimeType = "video/quicktime"; ext = "mov" }
-                                            lower.endsWith(".jpg") || lower.endsWith(".jpeg") -> { mimeType = "image/jpeg"; ext = "jpg" }
+                                            lower.endsWith(".gif") -> { mimeType = "image/gif"; ext = "gif"; isVideo = false }
+                                            lower.endsWith(".png") -> { mimeType = "image/png"; ext = "png"; isVideo = false }
+                                            lower.endsWith(".webp") -> { mimeType = "image/webp"; ext = "webp"; isVideo = false }
+                                            lower.endsWith(".mp4") -> { mimeType = "video/mp4"; ext = "mp4"; isVideo = true }
+                                            lower.endsWith(".webm") -> { mimeType = "video/webm"; ext = "webm"; isVideo = true }
+                                            lower.endsWith(".mkv") -> { mimeType = "video/x-matroska"; ext = "mkv"; isVideo = true }
+                                            lower.endsWith(".mov") -> { mimeType = "video/quicktime"; ext = "mov"; isVideo = true }
+                                            lower.endsWith(".jpg") || lower.endsWith(".jpeg") -> { mimeType = "image/jpeg"; ext = "jpg"; isVideo = false }
                                         }
                                     }
                                 }
                             }
                         }
-                        
-                        if (ext == "jpg") {
-                            ext = when {
-                                mimeType.contains("gif") -> "gif"
-                                mimeType.contains("png") -> "png"
-                                mimeType.contains("webp") -> "webp"
-                                mimeType.contains("mp4") -> "mp4"
-                                mimeType.contains("webm") -> "webm"
-                                mimeType.contains("mkv") -> "mkv"
-                                mimeType.contains("mov") -> "mov"
-                                mimeType.startsWith("video/") -> "mp4"
-                                else -> "jpg"
-                            }
-                        }
-                        
-                        val fileName = "imported_${System.currentTimeMillis()}.$ext"
-                        val newFile = folder.createFile(mimeType, fileName)
-                        if (newFile != null) {
-                            context.contentResolver.openInputStream(uri)?.buffered()?.use { input ->
-                                context.contentResolver.openOutputStream(newFile.uri)?.buffered()?.use { output ->
-                                    input.copyTo(output)
+
+                        if (isVideo) {
+                            // Convert video into animated GIF (taking up to 15 seconds)
+                            val tempFile = File(context.cacheDir, "import_conv_${System.currentTimeMillis()}.gif")
+                            val converted = GifConverter.convertVideoToGif(context, uri, tempFile, targetWidth = 320, fps = 8)
+                            if (converted && tempFile.exists()) {
+                                val fileName = "imported_${System.currentTimeMillis()}.gif"
+                                val newFile = folder.createFile("image/gif", fileName)
+                                if (newFile != null) {
+                                    tempFile.inputStream().buffered().use { input ->
+                                        context.contentResolver.openOutputStream(newFile.uri)?.buffered()?.use { output ->
+                                            input.copyTo(output)
+                                        }
+                                    }
+                                    convertedGifsCount++
                                 }
+                                tempFile.delete()
+                            } else {
+                                // Fallback: save original video file if GIF conversion couldn't read stream
+                                val fileName = "imported_${System.currentTimeMillis()}.$ext"
+                                val newFile = folder.createFile(mimeType, fileName)
+                                if (newFile != null) {
+                                    context.contentResolver.openInputStream(uri)?.buffered()?.use { input ->
+                                        context.contentResolver.openOutputStream(newFile.uri)?.buffered()?.use { output ->
+                                            input.copyTo(output)
+                                        }
+                                    }
+                                }
+                            }
+                        } else {
+                            if (ext == "jpg") {
+                                ext = when {
+                                    mimeType.contains("gif") -> "gif"
+                                    mimeType.contains("png") -> "png"
+                                    mimeType.contains("webp") -> "webp"
+                                    else -> "jpg"
+                                }
+                            }
+                            
+                            val fileName = "imported_${System.currentTimeMillis()}.$ext"
+                            val newFile = folder.createFile(mimeType, fileName)
+                            if (newFile != null) {
+                                context.contentResolver.openInputStream(uri)?.buffered()?.use { input ->
+                                    context.contentResolver.openOutputStream(newFile.uri)?.buffered()?.use { output ->
+                                        input.copyTo(output)
+                                    }
+                                }
+                                importedImagesCount++
                             }
                         }
                     } catch (e: Exception) {
@@ -766,8 +902,21 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     }
                 }
             }
+
+            if (convertedGifsCount > 0) {
+                withContext(Dispatchers.Main) {
+                    Toast.makeText(
+                        context,
+                        "Converted $convertedGifsCount video(s) into animated GIF(s)!",
+                        Toast.LENGTH_SHORT
+                    ).show()
+                }
+            }
+
+            // Invalidate folder cache so new media is immediately displayed
+            folderCache.remove(folderToUse.id)
             prefs.edit().putLong("last_media_update", System.currentTimeMillis()).apply()
-            loadImages()
+            loadImages(showSpinnerIfCached = true)
         }
     }
 
@@ -824,20 +973,18 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
-    private fun applySorting() {
-        val currentImages = _images.value
-        val (pinned, unpinned) = currentImages.partition { it.isPinned }
+    fun sortItemList(items: List<GalleryItem>, option: SortOption): List<GalleryItem> {
+        val (pinned, unpinned) = items.partition { it.isPinned }
 
-        val sortBlock: (GalleryItem) -> Comparable<*>? = when (_sortOption.value) {
-            SortOption.NAME_ASC -> { item -> item.name.lowercase() }
-            SortOption.NAME_DESC -> { item -> item.name.lowercase() }
-            SortOption.DATE_NEWEST -> { item -> item.dateModified }
-            SortOption.DATE_OLDEST -> { item -> item.dateModified }
-            SortOption.SIZE_LARGEST -> { item -> item.size }
-            SortOption.SIZE_SMALLEST -> { item -> item.size }
+        val sortBlock: (GalleryItem) -> Comparable<*>? = when (option) {
+            SortOption.NAME_ASC, SortOption.NAME_DESC -> { item -> item.name.lowercase() }
+            SortOption.DATE_NEWEST, SortOption.DATE_OLDEST -> { item -> item.dateModified }
+            SortOption.SIZE_LARGEST, SortOption.SIZE_SMALLEST -> { item -> item.size }
         }
 
-        val sortedPinned = if (_sortOption.value == SortOption.NAME_DESC || _sortOption.value == SortOption.DATE_NEWEST || _sortOption.value == SortOption.SIZE_LARGEST) {
+        val isDesc = option == SortOption.NAME_DESC || option == SortOption.DATE_NEWEST || option == SortOption.SIZE_LARGEST
+
+        val sortedPinned = if (isDesc) {
             @Suppress("UNCHECKED_CAST")
             pinned.sortedWith(compareByDescending(sortBlock as (GalleryItem) -> Comparable<Any>?))
         } else {
@@ -845,7 +992,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             pinned.sortedWith(compareBy(sortBlock as (GalleryItem) -> Comparable<Any>?))
         }
 
-        val sortedUnpinned = if (_sortOption.value == SortOption.NAME_DESC || _sortOption.value == SortOption.DATE_NEWEST || _sortOption.value == SortOption.SIZE_LARGEST) {
+        val sortedUnpinned = if (isDesc) {
             @Suppress("UNCHECKED_CAST")
             unpinned.sortedWith(compareByDescending(sortBlock as (GalleryItem) -> Comparable<Any>?))
         } else {
@@ -853,6 +1000,10 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             unpinned.sortedWith(compareBy(sortBlock as (GalleryItem) -> Comparable<Any>?))
         }
 
-        _images.value = sortedPinned + sortedUnpinned
+        return sortedPinned + sortedUnpinned
+    }
+
+    private fun applySorting() {
+        _images.value = sortItemList(_images.value, _sortOption.value)
     }
 }

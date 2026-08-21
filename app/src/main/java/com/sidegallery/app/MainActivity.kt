@@ -1,4 +1,4 @@
-package com.example
+package com.sidegallery.app
 
 import android.content.Context
 import android.content.Intent
@@ -143,7 +143,7 @@ import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import coil.compose.AsyncImage
-import com.example.ui.theme.SideGalleryTheme
+import com.sidegallery.app.ui.theme.SideGalleryTheme
 import com.sidegallery.app.R
 import kotlinx.coroutines.launch
 
@@ -262,6 +262,10 @@ class MainActivity : ComponentActivity() {
                                     pendingFolderForMediaImport = null
                                     mediaPicker.launch(androidx.activity.result.PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageAndVideo))
                                 },
+                                onPickMediaForFolder = { folder ->
+                                    pendingFolderForMediaImport = folder
+                                    mediaPicker.launch(androidx.activity.result.PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageAndVideo))
+                                },
                                 onToggleService = { enable ->
                                     if (enable) {
                                         val intent = Intent(this@MainActivity, OverlayService::class.java)
@@ -357,6 +361,7 @@ fun OnboardingScreen(
     onCheckPermission: () -> Unit = {},
     onPickFolder: () -> Unit,
     onPickMedia: () -> Unit,
+    onPickMediaForFolder: (GalleryFolder) -> Unit = {},
     onToggleService: (Boolean) -> Unit,
     onOpenPreviewSimulator: () -> Unit,
     onFinishOnboarding: () -> Unit
@@ -592,6 +597,11 @@ fun OnboardingScreen(
                 // Step 2: Choose Folder
                 2 -> {
                     val userFolders = folders.filter { !it.isSpecialPinned }
+                    var selectedTargetFolderId by remember(userFolders) {
+                        mutableStateOf(userFolders.firstOrNull()?.id ?: "")
+                    }
+                    val targetFolder = userFolders.find { it.id == selectedTargetFolderId } ?: userFolders.firstOrNull()
+
                     Column(
                         modifier = Modifier.fillMaxWidth(),
                         verticalArrangement = Arrangement.spacedBy(16.dp)
@@ -602,7 +612,7 @@ fun OnboardingScreen(
                             fontWeight = FontWeight.Bold
                         )
                         Text(
-                            text = "Choose or create a folder on your phone where your images, memes, GIFs, or videos are stored.",
+                            text = "Choose or create folders on your phone where your images, memes, GIFs, or videos are stored.",
                             style = MaterialTheme.typography.bodyMedium,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
@@ -632,12 +642,55 @@ fun OnboardingScreen(
                                 }
 
                                 if (userFolders.isNotEmpty()) {
+                                    Text(
+                                        text = "Target folder for importing:",
+                                        style = MaterialTheme.typography.labelMedium,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                                    )
                                     userFolders.forEach { f ->
-                                        Text(
-                                            text = "• ${f.name}",
-                                            style = MaterialTheme.typography.bodyMedium,
-                                            fontWeight = FontWeight.Medium
-                                        )
+                                        val isSelectedTarget = (f.id == targetFolder?.id)
+                                        Row(
+                                            modifier = Modifier
+                                                .fillMaxWidth()
+                                                .clip(RoundedCornerShape(8.dp))
+                                                .background(
+                                                    if (isSelectedTarget)
+                                                        MaterialTheme.colorScheme.primary.copy(alpha = 0.15f)
+                                                    else
+                                                        Color.Transparent
+                                                )
+                                                .clickable { selectedTargetFolderId = f.id }
+                                                .padding(horizontal = 8.dp, vertical = 6.dp),
+                                            verticalAlignment = Alignment.CenterVertically,
+                                            horizontalArrangement = Arrangement.SpaceBetween
+                                        ) {
+                                            Row(
+                                                verticalAlignment = Alignment.CenterVertically,
+                                                horizontalArrangement = Arrangement.spacedBy(8.dp)
+                                            ) {
+                                                RadioButton(
+                                                    selected = isSelectedTarget,
+                                                    onClick = { selectedTargetFolderId = f.id }
+                                                )
+                                                Text(
+                                                    text = f.name,
+                                                    style = MaterialTheme.typography.bodyMedium,
+                                                    fontWeight = if (isSelectedTarget) FontWeight.Bold else FontWeight.Normal
+                                                )
+                                            }
+
+                                            IconButton(
+                                                onClick = { onPickMediaForFolder(f) },
+                                                modifier = Modifier.size(32.dp)
+                                            ) {
+                                                Icon(
+                                                    imageVector = Icons.Default.AddPhotoAlternate,
+                                                    contentDescription = "Import to ${f.name}",
+                                                    tint = MaterialTheme.colorScheme.primary,
+                                                    modifier = Modifier.size(20.dp)
+                                                )
+                                            }
+                                        }
                                     }
                                 }
 
@@ -652,15 +705,18 @@ fun OnboardingScreen(
                             }
                         }
 
-                        if (userFolders.isNotEmpty()) {
+                        if (userFolders.isNotEmpty() && targetFolder != null) {
                             Card(modifier = Modifier.fillMaxWidth()) {
                                 Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                                    Text("Add Media (Optional)", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold)
-                                    Text("You can import images or videos into your folders right now.", style = MaterialTheme.typography.bodySmall)
-                                    OutlinedButton(onClick = onPickMedia, modifier = Modifier.fillMaxWidth()) {
+                                    Text("Import Media (Optional)", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold)
+                                    Text("Destination folder: ${targetFolder.name}", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.primary, fontWeight = FontWeight.SemiBold)
+                                    OutlinedButton(
+                                        onClick = { onPickMediaForFolder(targetFolder) },
+                                        modifier = Modifier.fillMaxWidth()
+                                    ) {
                                         Icon(Icons.Default.AddPhotoAlternate, contentDescription = null)
                                         Spacer(Modifier.width(8.dp))
-                                        Text("Import Media (+)")
+                                        Text("Import into \"${targetFolder.name}\" (+)")
                                     }
                                 }
                             }
@@ -1055,13 +1111,13 @@ fun MainScreen(
                                             Icon(Icons.Default.Edit, contentDescription = "Rename", tint = MaterialTheme.colorScheme.onSurfaceVariant)
                                         }
 
-                                        // Delete folder button (if more than 1 regular folder)
+                                        // Remove folder from sidebar list button (if more than 1 regular folder)
                                         if (folders.count { !it.isSpecialPinned } > 1) {
                                             IconButton(
                                                 onClick = { folderToRemove = folder },
                                                 modifier = Modifier.size(36.dp)
                                             ) {
-                                                Icon(Icons.Default.Delete, contentDescription = "Remove", tint = MaterialTheme.colorScheme.error)
+                                                Icon(Icons.Default.Close, contentDescription = "Remove from Sidebar", tint = MaterialTheme.colorScheme.onSurfaceVariant)
                                             }
                                         }
                                     }
@@ -1405,21 +1461,29 @@ fun MainScreen(
         )
     }
 
-    // Remove Folder Confirmation Dialog
+    // Remove Folder from Sidebar Dialog
     folderToRemove?.let { folder ->
         AlertDialog(
             onDismissRequest = { folderToRemove = null },
-            title = { Text("Remove Folder?") },
-            text = { Text("Are you sure you want to remove \"${folder.name}\" from SideGallery? The files on your device will remain intact.") },
+            title = { Text("Remove from Sidebar") },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text("Remove \"${folder.name}\" from SideGallery's folders list?")
+                    Text(
+                        "📁 No files on your device will be deleted. The original folder and all its photos/videos stay safe on your phone.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+            },
             confirmButton = {
                 Button(
                     onClick = {
                         viewModel.removeFolder(folder.id)
                         folderToRemove = null
-                    },
-                    colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error)
+                    }
                 ) {
-                    Text("Remove")
+                    Text("Remove from Sidebar")
                 }
             },
             dismissButton = {
@@ -1865,26 +1929,28 @@ fun InAppInteractiveSimulatorOverlay(
                             Box(
                                 modifier = Modifier
                                     .fillMaxSize()
-                                    .background(Color.Black.copy(alpha = 0.5f)),
+                                    .background(Color.Black.copy(alpha = 0.6f))
+                                    .clickable { itemToDeleteConfirm = null },
                                 contentAlignment = Alignment.Center
                             ) {
                                 Card(
                                     modifier = Modifier
-                                        .padding(16.dp)
-                                        .fillMaxWidth(0.9f),
+                                        .padding(12.dp)
+                                        .fillMaxWidth(0.95f)
+                                        .clickable(enabled = false) {},
                                     shape = RoundedCornerShape(16.dp),
                                     colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)
                                 ) {
                                     Column(
-                                        modifier = Modifier.padding(16.dp),
+                                        modifier = Modifier.padding(14.dp),
                                         horizontalAlignment = Alignment.CenterHorizontally,
-                                        verticalArrangement = Arrangement.spacedBy(12.dp)
+                                        verticalArrangement = Arrangement.spacedBy(10.dp)
                                     ) {
                                         Icon(
                                             imageVector = Icons.Default.Warning,
                                             contentDescription = null,
                                             tint = MaterialTheme.colorScheme.error,
-                                            modifier = Modifier.size(32.dp)
+                                            modifier = Modifier.size(28.dp)
                                         )
                                         Text(
                                             text = "Delete File?",
@@ -1895,27 +1961,31 @@ fun InAppInteractiveSimulatorOverlay(
                                             text = "Are you sure you want to delete \"${deletingItem.name}\"?",
                                             style = MaterialTheme.typography.bodySmall,
                                             textAlign = TextAlign.Center,
-                                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                            maxLines = 3,
+                                            overflow = TextOverflow.Ellipsis
                                         )
-                                        Row(
+                                        Column(
                                             modifier = Modifier.fillMaxWidth(),
-                                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                                            verticalArrangement = Arrangement.spacedBy(6.dp)
                                         ) {
-                                            OutlinedButton(
-                                                onClick = { itemToDeleteConfirm = null },
-                                                modifier = Modifier.weight(1f)
-                                            ) {
-                                                Text("Cancel")
-                                            }
                                             Button(
                                                 onClick = {
                                                     viewModel.deleteItem(context, deletingItem)
                                                     itemToDeleteConfirm = null
                                                 },
                                                 colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error),
-                                                modifier = Modifier.weight(1f)
+                                                contentPadding = PaddingValues(horizontal = 12.dp, vertical = 8.dp),
+                                                modifier = Modifier.fillMaxWidth()
                                             ) {
-                                                Text("Delete")
+                                                Text("Delete File", fontWeight = FontWeight.Bold)
+                                            }
+                                            OutlinedButton(
+                                                onClick = { itemToDeleteConfirm = null },
+                                                contentPadding = PaddingValues(horizontal = 12.dp, vertical = 8.dp),
+                                                modifier = Modifier.fillMaxWidth()
+                                            ) {
+                                                Text("Cancel")
                                             }
                                         }
                                     }
