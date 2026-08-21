@@ -518,20 +518,35 @@ fun OnboardingScreen(
                                 }
                                 Text("Allows SideGallery to open the floating trigger bar or bubble over any active app.", style = MaterialTheme.typography.bodySmall)
                                 if (!canDrawOverlays) {
-                                    Row(
-                                        modifier = Modifier.fillMaxWidth(),
-                                        horizontalArrangement = Arrangement.spacedBy(8.dp)
-                                    ) {
-                                        Button(
-                                            onClick = onRequestOverlayPermission,
-                                            modifier = Modifier.weight(1f)
+                                    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                                        Row(
+                                            modifier = Modifier.fillMaxWidth(),
+                                            horizontalArrangement = Arrangement.spacedBy(8.dp)
                                         ) {
-                                            Text("Grant Permission")
+                                            Button(
+                                                onClick = onRequestOverlayPermission,
+                                                modifier = Modifier.weight(1f)
+                                            ) {
+                                                Text("Grant Permission")
+                                            }
+                                            OutlinedButton(
+                                                onClick = onCheckPermission
+                                            ) {
+                                                Icon(Icons.Default.Refresh, contentDescription = "Refresh")
+                                            }
                                         }
-                                        OutlinedButton(
-                                            onClick = onCheckPermission
-                                        ) {
-                                            Icon(Icons.Default.Refresh, contentDescription = "Refresh")
+                                        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                                            OutlinedButton(
+                                                onClick = {
+                                                    val intent = Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS).apply {
+                                                        data = Uri.parse("package:${context.packageName}")
+                                                    }
+                                                    context.startActivity(intent)
+                                                },
+                                                modifier = Modifier.fillMaxWidth()
+                                            ) {
+                                                Text("App Info (Allow Restricted Access)")
+                                            }
                                         }
                                     }
                                 } else {
