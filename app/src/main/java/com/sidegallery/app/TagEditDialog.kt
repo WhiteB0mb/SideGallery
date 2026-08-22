@@ -5,6 +5,8 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.KeyboardActions
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Label
@@ -14,12 +16,19 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.Color
+import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import coil.compose.AsyncImage
+import kotlinx.coroutines.delay
 
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
@@ -31,16 +40,25 @@ fun TagEditDialog(
     var tagsInput by remember {
         mutableStateOf(item.tags.joinToString(", "))
     }
+    val focusRequester = remember { FocusRequester() }
+    val keyboardController = LocalSoftwareKeyboardController.current
+
+    LaunchedEffect(Unit) {
+        delay(200)
+        try {
+            focusRequester.requestFocus()
+            keyboardController?.show()
+        } catch (e: Exception) {}
+    }
 
     // In-tree modal overlay: Safe for Service WindowManager overlays as well as Activities
     Box(
         modifier = Modifier
             .fillMaxSize()
             .background(Color.Black.copy(alpha = 0.65f))
-            .clickable(
-                interactionSource = remember { MutableInteractionSource() },
-                indication = null
-            ) { onDismiss() },
+            .pointerInput(Unit) {
+                detectTapGestures(onTap = { onDismiss() })
+            },
         contentAlignment = Alignment.Center
     ) {
         Card(
@@ -48,10 +66,9 @@ fun TagEditDialog(
                 .widthIn(max = 440.dp)
                 .fillMaxWidth(0.92f)
                 .padding(16.dp)
-                .clickable(
-                    interactionSource = remember { MutableInteractionSource() },
-                    indication = null
-                ) { /* Prevent dismissing when clicking card content */ },
+                .pointerInput(Unit) {
+                    detectTapGestures(onTap = { /* Prevent dismissing */ })
+                },
             shape = RoundedCornerShape(20.dp),
             colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
             elevation = CardDefaults.cardElevation(defaultElevation = 10.dp)
@@ -148,13 +165,25 @@ fun TagEditDialog(
                     }
                 }
 
+                fun saveTags() {
+                    val cleanTags = tagsInput.split(",")
+                        .map { it.trim().lowercase() }
+                        .filter { it.isNotEmpty() }
+                        .distinct()
+                    onSaveTags(cleanTags)
+                }
+
                 // Input Field
                 OutlinedTextField(
                     value = tagsInput,
                     onValueChange = { tagsInput = it },
                     label = { Text("Tags (comma separated)") },
                     placeholder = { Text("meme, funny, reaction, cat") },
-                    modifier = Modifier.fillMaxWidth(),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .focusRequester(focusRequester),
+                    keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done),
+                    keyboardActions = KeyboardActions(onDone = { saveTags() }),
                     supportingText = {
                         Text("Separate tags with commas. Saved in lowercase.")
                     },
@@ -173,13 +202,7 @@ fun TagEditDialog(
                         Text("Cancel")
                     }
                     Button(
-                        onClick = {
-                            val cleanTags = tagsInput.split(",")
-                                .map { it.trim().lowercase() }
-                                .filter { it.isNotEmpty() }
-                                .distinct()
-                            onSaveTags(cleanTags)
-                        },
+                        onClick = { saveTags() },
                         modifier = Modifier.weight(1f)
                     ) {
                         Icon(Icons.Default.Save, contentDescription = null, modifier = Modifier.size(16.dp))

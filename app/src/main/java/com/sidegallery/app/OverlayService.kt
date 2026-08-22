@@ -280,7 +280,7 @@ class OverlayService : Service(), LifecycleOwner, ViewModelStoreOwner, SavedStat
                         viewModel = viewModel, 
                         imageLoader = imageLoader, 
                         orientation = currentOri,
-                        onUpdateWindowParams = { expanded, triggerType, panelSide, shouldHide, isGuideActive, swipeHeightPercent, isSearchActive ->
+                        onUpdateWindowParams = { expanded, triggerType, panelSide, shouldHide, isGuideActive, swipeHeightPercent, needsFocus ->
                             if (shouldHide) {
                                 composeView.visibility = View.GONE
                                 layoutParams.width = 0
@@ -295,7 +295,7 @@ class OverlayService : Service(), LifecycleOwner, ViewModelStoreOwner, SavedStat
                                     layoutParams.height = WindowManager.LayoutParams.MATCH_PARENT
                                     layoutParams.x = 0
                                     layoutParams.y = 0
-                                    if (isSearchActive) {
+                                    if (needsFocus) {
                                         // Allow window to receive keyboard input and focus
                                         layoutParams.flags = layoutParams.flags and (WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE.inv())
                                         layoutParams.softInputMode = WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE or WindowManager.LayoutParams.SOFT_INPUT_STATE_VISIBLE
@@ -428,6 +428,7 @@ fun OverlayContent(
 
     val isLandscape = orientation == Configuration.ORIENTATION_LANDSCAPE
     val shouldHide = isLandscape && hideInLandscape && !expanded
+    val needsFocus = isSearchOpen || (itemToEditTags != null)
 
     fun toggleExpand(expand: Boolean) {
         if (expand) {
@@ -435,15 +436,17 @@ fun OverlayContent(
         } else {
             activeContextItem = null
             itemToDeleteConfirm = null
+            itemToEditTags = null
             isSearchOpen = false
             searchQuery = ""
         }
-        onUpdateWindowParams(expand, triggerType, panelSide, shouldHide, isGuideActive, swipeHeightPercent, isSearchOpen)
+        val currentNeedsFocus = if (!expand) false else (isSearchOpen || itemToEditTags != null)
+        onUpdateWindowParams(expand, triggerType, panelSide, shouldHide, isGuideActive, swipeHeightPercent, currentNeedsFocus)
         expanded = expand
     }
 
-    LaunchedEffect(expanded, triggerType, panelSide, shouldHide, isGuideActive, panelWidthPercent, swipeHeightPercent, panelHeightPercent, orientation, isSearchOpen) {
-        onUpdateWindowParams(expanded, triggerType, panelSide, shouldHide, isGuideActive, swipeHeightPercent, isSearchOpen)
+    LaunchedEffect(expanded, triggerType, panelSide, shouldHide, isGuideActive, panelWidthPercent, swipeHeightPercent, panelHeightPercent, orientation, needsFocus) {
+        onUpdateWindowParams(expanded, triggerType, panelSide, shouldHide, isGuideActive, swipeHeightPercent, needsFocus)
     }
 
     LaunchedEffect(isSearchOpen) {

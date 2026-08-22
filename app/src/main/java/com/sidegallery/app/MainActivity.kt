@@ -58,6 +58,7 @@ import androidx.compose.material.icons.filled.ArrowDropDown
 import androidx.compose.material.icons.filled.ArrowUpward
 import androidx.compose.material.icons.filled.BookmarkBorder
 import androidx.compose.material.icons.filled.CheckCircle
+import androidx.compose.material.icons.filled.Label
 import androidx.compose.material.icons.filled.Circle
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Compress
@@ -1645,6 +1646,7 @@ fun InAppInteractiveSimulatorOverlay(
     var isGuideActive by remember { mutableStateOf(false) }
     var activeContextItem by remember { mutableStateOf<GalleryItem?>(null) }
     var itemToDeleteConfirm by remember { mutableStateOf<GalleryItem?>(null) }
+    var itemToEditTags by remember { mutableStateOf<GalleryItem?>(null) }
 
     LaunchedEffect(guidePreviewUntil) {
         while (System.currentTimeMillis() < guidePreviewUntil) {
@@ -1985,6 +1987,20 @@ fun InAppInteractiveSimulatorOverlay(
                                         }
                                         IconButton(
                                             onClick = {
+                                                itemToEditTags = selectedItem
+                                                activeContextItem = null
+                                            },
+                                            modifier = Modifier.size(38.dp)
+                                        ) {
+                                            Icon(
+                                                imageVector = Icons.Default.Label,
+                                                contentDescription = "Edit Tags",
+                                                tint = MaterialTheme.colorScheme.inverseOnSurface,
+                                                modifier = Modifier.size(18.dp)
+                                            )
+                                        }
+                                        IconButton(
+                                            onClick = {
                                                 ClipboardUtils.shareMedia(context, selectedItem.uri)
                                                 activeContextItem = null
                                             },
@@ -2039,9 +2055,7 @@ fun InAppInteractiveSimulatorOverlay(
                                     }
                                 }
                             }
-                        }
-
-                        // Delete Confirmation Card
+                              // Delete Confirmation Card
                         if (itemToDeleteConfirm != null) {
                             val deletingItem = itemToDeleteConfirm!!
                             Box(
@@ -2068,7 +2082,7 @@ fun InAppInteractiveSimulatorOverlay(
                                             imageVector = Icons.Default.Warning,
                                             contentDescription = null,
                                             tint = MaterialTheme.colorScheme.error,
-                                            modifier = Modifier.size(28.dp)
+                                            modifier = Modifier.size(32.dp)
                                         )
                                         Text(
                                             text = "Delete File?",
@@ -2080,7 +2094,7 @@ fun InAppInteractiveSimulatorOverlay(
                                             style = MaterialTheme.typography.bodySmall,
                                             textAlign = TextAlign.Center,
                                             color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                            maxLines = 3,
+                                            maxLines = 2,
                                             overflow = TextOverflow.Ellipsis
                                         )
                                         Column(
@@ -2110,7 +2124,20 @@ fun InAppInteractiveSimulatorOverlay(
                                 }
                             }
                         }
+
+                        // Tag Edit Dialog
+                        if (itemToEditTags != null) {
+                            TagEditDialog(
+                                item = itemToEditTags!!,
+                                onDismiss = { itemToEditTags = null },
+                                onSaveTags = { newTags ->
+                                    viewModel.setItemTags(itemToEditTags!!, newTags)
+                                    itemToEditTags = null
+                                }
+                            )
+                        }
                     }
+                }
 
                     // Bottom info bar
                     Surface(
