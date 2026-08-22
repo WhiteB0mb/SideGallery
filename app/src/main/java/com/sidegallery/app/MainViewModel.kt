@@ -34,7 +34,8 @@ data class GalleryItem(
     val isGif: Boolean,
     val isVideo: Boolean = false,
     val isPinned: Boolean = false,
-    val folderId: String = ""
+    val folderId: String = "",
+    val tags: List<String> = emptyList()
 )
 
 data class GalleryFolder(
@@ -655,6 +656,73 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
+    fun generateAutoTags(filename: String): List<String> {
+        val nameWithoutExt = filename.substringBeforeLast('.')
+        val clean = nameWithoutExt.replace(Regex("[_\\-+\\.,!@#$%^&*()\\[\\]{}|;:'\"<>/\\\\?`~]"), " ")
+        return clean.split(Regex("\\s+"))
+            .map { it.trim().lowercase() }
+            .filter { it.length >= 2 && !it.startsWith("imported") && it.toLongOrNull() == null }
+            .distinct()
+    }
+
+    private fun loadCustomTagsMap(): Map<String, List<String>> {
+        val jsonStr = prefs.getString("media_tags_json", null) ?: return emptyMap()
+        val map = mutableMapOf<String, List<String>>()
+        try {
+            val obj = JSONObject(jsonStr)
+            val keys = obj.keys()
+            while (keys.hasNext()) {
+                val key = keys.next()
+                val arr = obj.optJSONArray(key)
+                if (arr != null) {
+                    val list = mutableListOf<String>()
+                    for (i in 0 until arr.length()) {
+                        val t = arr.optString(i)?.trim()?.lowercase()
+                        if (!t.isNullOrEmpty()) list.add(t)
+                    }
+                    map[key] = list
+                }
+            }
+        } catch (e: Exception) {
+            e.printStackTrace()
+        }
+        return map
+    }
+
+    private fun saveCustomTagsMap(map: Map<String, List<String>>) {
+        try {
+            val obj = JSONObject()
+            for ((k, list) in map) {
+                val arr = JSONArray()
+                list.forEach { arr.put(it) }
+                obj.put(k, arr)
+            }
+            prefs.edit().putString("media_tags_json", obj.toString()).apply()
+        } catch (e: Exception) {
+            e.printStackTrace()
+        }
+    }
+
+    fun setItemTags(item: GalleryItem, newTags: List<String>) {
+        val cleanTags = newTags.map { it.trim().lowercase() }.filter { it.isNotEmpty() }.distinct()
+        val map = loadCustomTagsMap().toMutableMap()
+        val uriKey = item.uri.toString()
+        if (cleanTags.isEmpty()) {
+            map.remove(uriKey)
+        } else {
+            map[uriKey] = cleanTags
+        }
+        saveCustomTagsMap(map)
+
+        val effectiveTags = if (cleanTags.isEmpty()) generateAutoTags(item.name) else cleanTags
+        _images.value = _images.value.map {
+            if (it.uri == item.uri) it.copy(tags = effectiveTags) else it
+        }
+
+        folderCache.clear()
+        prefs.edit().putLong("last_media_update", System.currentTimeMillis()).apply()
+    }
+
     private fun queryMediaFromFolder(
         context: Context,
         folderUri: Uri,
@@ -662,6 +730,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         pinnedSet: Set<String>
     ): List<GalleryItem> {
         val items = mutableListOf<GalleryItem>()
+        val customTagsMap = loadCustomTagsMap()
         var querySuccess = false
 
         // Fast batch cursor query via DocumentsContract
@@ -722,6 +791,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                         val size = if (sizeCol != -1) cursor.getLong(sizeCol) else 0L
                         val isGif = mimeType == "image/gif" || lowerName.endsWith(".gif")
                         val isPinned = pinnedSet.contains(fileUri.toString())
+                        val uriKey = fileUri.toString()
+                        val itemTags = customTagsMap[uriKey] ?: generateAutoTags(name)
 
                         items.add(
                             GalleryItem(
@@ -732,7 +803,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                                 isGif = isGif,
                                 isVideo = isVid,
                                 isPinned = isPinned,
-                                folderId = folderId
+                                folderId = folderId,
+                                tags = itemTags
                             )
                         )
                     }
@@ -777,6 +849,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     }
                     val isGif = mimeType == "image/gif" || lowerName.endsWith(".gif")
                     val isPinned = pinnedSet.contains(file.uri.toString())
+                    val uriKey = file.uri.toString()
+                    val itemTags = customTagsMap[uriKey] ?: generateAutoTags(name)
 
                     items.add(
                         GalleryItem(
@@ -787,7 +861,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                             isGif = isGif,
                             isVideo = isVid,
                             isPinned = isPinned,
-                            folderId = folderId
+                            folderId = folderId,
+                            tags = itemTags
                         )
                     )
                 }
@@ -1001,6 +1076,223 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
 
         return sortedPinned + sortedUnpinned
+    }
+
+    fun importVideoWithTrim(
+        context: Context,
+        uri: Uri,
+        startMs: Long,
+        endMs: Long,
+        targetFolder: GalleryFolder? = null,
+        targetFolderId: String? = null
+    ) {
+        val folderToUse = targetFolder ?: run {
+            if (targetFolderId != null) {
+                _folders.value.find { it.id == targetFolderId }
+            } else {
+                _currentFolder.value
+            }
+        }
+        if (folderToUse == null || folderToUse.isSpecialPinned || folderToUse.uriString.isBlank()) {
+            return
+        }
+        val folderUri = Uri.parse(folderToUse.uriString)
+
+        _isLoading.value = true
+        viewModelScope.launch {
+            withContext(Dispatchers.IO) {
+                try {
+                    val folder = DocumentFile.fromTreeUri(context, folderUri)
+                    if (folder != null) {
+                        val tempFile = File(context.cacheDir, "import_trim_${System.currentTimeMillis()}.gif")
+                        val converted = GifConverter.convertVideoToGif(
+                            context = context,
+                            videoUri = uri,
+                            destFile = tempFile,
+                            targetWidth = 320,
+                            fps = 8,
+                            startMs = startMs,
+                            endMs = endMs
+                        )
+                        if (converted && tempFile.exists()) {
+                            val fileName = "imported_${System.currentTimeMillis()}.gif"
+                            val newFile = folder.createFile("image/gif", fileName)
+                            if (newFile != null) {
+                                tempFile.inputStream().buffered().use { input ->
+                                    context.contentResolver.openOutputStream(newFile.uri)?.buffered().use { output ->
+                                        if (output != null) input.copyTo(output)
+                                    }
+                                }
+                                withContext(Dispatchers.Main) {
+                                    Toast.makeText(context, "Trimmed video converted to animated GIF!", Toast.LENGTH_SHORT).show()
+                                }
+                            }
+                            tempFile.delete()
+                        }
+                    }
+                } catch (e: Exception) {
+                    e.printStackTrace()
+                }
+
+                folderCache.remove(folderToUse.id)
+                prefs.edit().putLong("last_media_update", System.currentTimeMillis()).apply()
+            }
+            loadImages(showSpinnerIfCached = true)
+        }
+    }
+
+    fun exportSettingsJson(): String {
+        val root = JSONObject()
+        root.put("version", 1)
+        root.put("exported_at", System.currentTimeMillis())
+
+        val settingsObj = JSONObject()
+        settingsObj.put("grid_columns", _gridColumns.value)
+        settingsObj.put("trigger_type", _triggerType.value.name)
+        settingsObj.put("scroll_direction", _scrollDirection.value.name)
+        settingsObj.put("swipe_height_percent", _swipeHeightPercent.value)
+        settingsObj.put("panel_side", _panelSide.value.name)
+        settingsObj.put("panel_width", _panelWidth.value.name)
+        settingsObj.put("panel_width_percent", _panelWidthPercent.value)
+        settingsObj.put("panel_height_percent", _panelHeightPercent.value)
+        settingsObj.put("panel_opacity_percent", _panelOpacityPercent.value)
+        settingsObj.put("theme_mode", _themeMode.value.name)
+        settingsObj.put("hide_in_landscape", _hideInLandscape.value)
+        settingsObj.put("sort_option", _sortOption.value.name)
+        root.put("settings", settingsObj)
+
+        val userFolders = _folders.value.filter { !it.isSpecialPinned }
+        val foldersArr = JSONArray()
+        for (f in userFolders) {
+            val fObj = JSONObject()
+            fObj.put("id", f.id)
+            fObj.put("name", f.name)
+            fObj.put("uriString", f.uriString)
+            foldersArr.put(fObj)
+        }
+        root.put("folders", foldersArr)
+
+        val pinnedArr = JSONArray()
+        for (p in _pinnedItemUris.value) {
+            pinnedArr.put(p)
+        }
+        root.put("pinned_item_uris", pinnedArr)
+
+        val customTags = loadCustomTagsMap()
+        val tagsObj = JSONObject()
+        for ((uriKey, tagList) in customTags) {
+            val tArr = JSONArray()
+            tagList.forEach { tArr.put(it) }
+            tagsObj.put(uriKey, tArr)
+        }
+        root.put("media_tags", tagsObj)
+
+        return root.toString(2)
+    }
+
+    fun exportSettingsToUri(context: Context, destinationUri: Uri): Boolean {
+        return try {
+            val json = exportSettingsJson()
+            context.contentResolver.openOutputStream(destinationUri)?.use { outputStream ->
+                outputStream.write(json.toByteArray(Charsets.UTF_8))
+                outputStream.flush()
+            }
+            true
+        } catch (e: Exception) {
+            e.printStackTrace()
+            false
+        }
+    }
+
+    fun importSettingsFromUri(context: Context, sourceUri: Uri): Boolean {
+        return try {
+            val jsonStr = context.contentResolver.openInputStream(sourceUri)?.use { inputStream ->
+                inputStream.bufferedReader(Charsets.UTF_8).readText()
+            } ?: return false
+            importSettingsJson(jsonStr)
+        } catch (e: Exception) {
+            e.printStackTrace()
+            false
+        }
+    }
+
+    fun importSettingsJson(jsonStr: String): Boolean {
+        return try {
+            val root = JSONObject(jsonStr)
+            val version = root.optInt("version", 1)
+
+            val editor = prefs.edit()
+
+            if (root.has("settings")) {
+                val s = root.getJSONObject("settings")
+                if (s.has("grid_columns")) editor.putInt("grid_columns", s.getInt("grid_columns"))
+                if (s.has("trigger_type")) editor.putString("trigger_type", s.getString("trigger_type"))
+                if (s.has("scroll_direction")) editor.putString("scroll_direction", s.getString("scroll_direction"))
+                if (s.has("swipe_height_percent")) editor.putInt("swipe_height_percent", s.getInt("swipe_height_percent"))
+                if (s.has("panel_side")) editor.putString("panel_side", s.getString("panel_side"))
+                if (s.has("panel_width")) editor.putString("panel_width", s.getString("panel_width"))
+                if (s.has("panel_width_percent")) editor.putInt("panel_width_percent", s.getInt("panel_width_percent"))
+                if (s.has("panel_height_percent")) editor.putInt("panel_height_percent", s.getInt("panel_height_percent"))
+                if (s.has("panel_opacity_percent")) editor.putInt("panel_opacity_percent", s.getInt("panel_opacity_percent"))
+                if (s.has("theme_mode")) editor.putString("theme_mode", s.getString("theme_mode"))
+                if (s.has("hide_in_landscape")) editor.putBoolean("hide_in_landscape", s.getBoolean("hide_in_landscape"))
+                if (s.has("sort_option")) editor.putString("sort_option", s.getString("sort_option"))
+            }
+
+            if (root.has("folders")) {
+                val arr = root.getJSONArray("folders")
+                val foldersArr = JSONArray()
+                for (i in 0 until arr.length()) {
+                    val item = arr.getJSONObject(i)
+                    val fObj = JSONObject()
+                    fObj.put("id", item.optString("id", UUID.randomUUID().toString()))
+                    fObj.put("name", item.optString("name", "Media"))
+                    fObj.put("uriString", item.optString("uriString", ""))
+                    fObj.put("isSpecialPinned", false)
+                    foldersArr.put(fObj)
+                }
+                editor.putString("gallery_folders_json", foldersArr.toString())
+            }
+
+            if (root.has("pinned_item_uris")) {
+                val arr = root.getJSONArray("pinned_item_uris")
+                val set = mutableSetOf<String>()
+                for (i in 0 until arr.length()) {
+                    val u = arr.optString(i)
+                    if (!u.isNullOrEmpty()) set.add(u)
+                }
+                editor.putStringSet("pinned_items_set", set)
+            }
+
+            if (root.has("media_tags")) {
+                val tagsObj = root.getJSONObject("media_tags")
+                editor.putString("media_tags_json", tagsObj.toString())
+            }
+
+            editor.putLong("last_media_update", System.currentTimeMillis())
+            editor.apply()
+
+            // Reload all in-memory values from prefs
+            _gridColumns.value = prefs.getInt("grid_columns", 2)
+            _triggerType.value = TriggerType.valueOf(prefs.getString("trigger_type", TriggerType.EDGE_SWIPE.name) ?: TriggerType.EDGE_SWIPE.name)
+            _scrollDirection.value = ScrollDirection.valueOf(prefs.getString("scroll_direction", ScrollDirection.TOP_TO_BOTTOM.name) ?: ScrollDirection.TOP_TO_BOTTOM.name)
+            _swipeHeightPercent.value = prefs.getInt("swipe_height_percent", 70)
+            _panelSide.value = PanelSide.valueOf(prefs.getString("panel_side", PanelSide.RIGHT.name) ?: PanelSide.RIGHT.name)
+            _panelWidth.value = PanelWidth.valueOf(prefs.getString("panel_width", PanelWidth.THIRD.name) ?: PanelWidth.THIRD.name)
+            _panelWidthPercent.value = prefs.getInt("panel_width_percent", 33)
+            _panelHeightPercent.value = prefs.getInt("panel_height_percent", 100)
+            _panelOpacityPercent.value = prefs.getInt("panel_opacity_percent", 95)
+            _themeMode.value = ThemeMode.valueOf(prefs.getString("theme_mode", ThemeMode.SYSTEM.name) ?: ThemeMode.SYSTEM.name)
+            _hideInLandscape.value = prefs.getBoolean("hide_in_landscape", false)
+            _sortOption.value = SortOption.valueOf(prefs.getString("sort_option", SortOption.DATE_NEWEST.name) ?: SortOption.DATE_NEWEST.name)
+            _pinnedItemUris.value = prefs.getStringSet("pinned_items_set", emptySet()) ?: emptySet()
+
+            reloadFoldersFromPrefs()
+            true
+        } catch (e: Exception) {
+            e.printStackTrace()
+            false
+        }
     }
 
     private fun applySorting() {

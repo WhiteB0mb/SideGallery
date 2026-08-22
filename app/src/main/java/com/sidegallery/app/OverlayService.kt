@@ -41,6 +41,7 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.layout.wrapContentSize
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
@@ -56,10 +57,12 @@ import androidx.compose.material.icons.filled.BookmarkBorder
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Folder
+import androidx.compose.material.icons.filled.Label
 import androidx.compose.material.icons.filled.PhotoLibrary
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.PushPin
 import androidx.compose.material.icons.filled.Refresh
+import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Share
 import androidx.compose.material.icons.filled.Star
 import androidx.compose.material.icons.filled.Warning
@@ -84,6 +87,9 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
@@ -274,12 +280,12 @@ class OverlayService : Service(), LifecycleOwner, ViewModelStoreOwner, SavedStat
                         viewModel = viewModel, 
                         imageLoader = imageLoader, 
                         orientation = currentOri,
-                        onUpdateWindowParams = { expanded, triggerType, panelSide, shouldHide, isGuideActive, swipeHeightPercent ->
+                        onUpdateWindowParams = { expanded, triggerType, panelSide, shouldHide, isGuideActive, swipeHeightPercent, isSearchActive ->
                             if (shouldHide) {
                                 composeView.visibility = View.GONE
                                 layoutParams.width = 0
                                 layoutParams.height = 0
-                                layoutParams.flags = layoutParams.flags or WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE
+                                layoutParams.flags = layoutParams.flags or WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE or WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE
                             } else {
                                 composeView.visibility = View.VISIBLE
                                 layoutParams.flags = layoutParams.flags and (WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE.inv())
@@ -289,7 +295,15 @@ class OverlayService : Service(), LifecycleOwner, ViewModelStoreOwner, SavedStat
                                     layoutParams.height = WindowManager.LayoutParams.MATCH_PARENT
                                     layoutParams.x = 0
                                     layoutParams.y = 0
+                                    if (isSearchActive) {
+                                        // Allow window to receive keyboard input and focus
+                                        layoutParams.flags = layoutParams.flags and (WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE.inv())
+                                        layoutParams.softInputMode = WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE or WindowManager.LayoutParams.SOFT_INPUT_STATE_VISIBLE
+                                    } else {
+                                        layoutParams.flags = layoutParams.flags or WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE
+                                    }
                                 } else {
+                                    layoutParams.flags = layoutParams.flags or WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE
                                     if (triggerType == TriggerType.FLOATING_BUTTON) {
                                         layoutParams.gravity = Gravity.START or Gravity.TOP
                                         layoutParams.width = WindowManager.LayoutParams.WRAP_CONTENT
@@ -363,7 +377,7 @@ fun OverlayContent(
     viewModel: MainViewModel, 
     imageLoader: ImageLoader, 
     orientation: Int,
-    onUpdateWindowParams: (Boolean, TriggerType, PanelSide, Boolean, Boolean, Int) -> Unit,
+    onUpdateWindowParams: (Boolean, TriggerType, PanelSide, Boolean, Boolean, Int, Boolean) -> Unit,
     onDragBubble: (Float, Float) -> Boolean,
     onCloseService: () -> Unit
 ) {
@@ -372,6 +386,11 @@ fun OverlayContent(
     // Floating Context Menu State for long-pressed item
     var activeContextItem by remember { mutableStateOf<GalleryItem?>(null) }
     var itemToDeleteConfirm by remember { mutableStateOf<GalleryItem?>(null) }
+    var itemToEditTags by remember { mutableStateOf<GalleryItem?>(null) }
+    var isSearchOpen by remember { mutableStateOf(false) }
+    var searchQuery by remember { mutableStateOf("") }
+    val searchFocusRequester = remember { androidx.compose.ui.focus.FocusRequester() }
+    val keyboardController = androidx.compose.ui.platform.LocalSoftwareKeyboardController.current
     
     val scope = rememberCoroutineScope()
     val context = LocalContext.current
@@ -416,13 +435,25 @@ fun OverlayContent(
         } else {
             activeContextItem = null
             itemToDeleteConfirm = null
+            isSearchOpen = false
+            searchQuery = ""
         }
-        onUpdateWindowParams(expand, triggerType, panelSide, shouldHide, isGuideActive, swipeHeightPercent)
+        onUpdateWindowParams(expand, triggerType, panelSide, shouldHide, isGuideActive, swipeHeightPercent, isSearchOpen)
         expanded = expand
     }
 
-    LaunchedEffect(expanded, triggerType, panelSide, shouldHide, isGuideActive, panelWidthPercent, swipeHeightPercent, panelHeightPercent, orientation) {
-        onUpdateWindowParams(expanded, triggerType, panelSide, shouldHide, isGuideActive, swipeHeightPercent)
+    LaunchedEffect(expanded, triggerType, panelSide, shouldHide, isGuideActive, panelWidthPercent, swipeHeightPercent, panelHeightPercent, orientation, isSearchOpen) {
+        onUpdateWindowParams(expanded, triggerType, panelSide, shouldHide, isGuideActive, swipeHeightPercent, isSearchOpen)
+    }
+
+    LaunchedEffect(isSearchOpen) {
+        if (isSearchOpen) {
+            kotlinx.coroutines.delay(100)
+            try {
+                searchFocusRequester.requestFocus()
+                keyboardController?.show()
+            } catch (e: Exception) {}
+        }
     }
 
     // Auto-dismiss context menu after 4 seconds of idle
@@ -620,89 +651,182 @@ fun OverlayContent(
                         contentColor = MaterialTheme.colorScheme.onPrimaryContainer,
                         modifier = Modifier.fillMaxWidth()
                     ) {
-                        Row(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .padding(horizontal = 6.dp, vertical = 6.dp),
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.SpaceBetween
-                        ) {
-                            // Previous Folder Button
-                            IconButton(
-                                onClick = { 
-                                    activeContextItem = null
-                                    viewModel.previousFolder() 
-                                },
-                                enabled = folders.size > 1,
-                                modifier = Modifier.size(32.dp)
+                        Column(modifier = Modifier.fillMaxWidth()) {
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(horizontal = 6.dp, vertical = 6.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.SpaceBetween
                             ) {
-                                Icon(
-                                    imageVector = Icons.AutoMirrored.Filled.ArrowBack,
-                                    contentDescription = "Previous Folder",
-                                    tint = if (folders.size > 1) MaterialTheme.colorScheme.onPrimaryContainer else MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.3f),
-                                    modifier = Modifier.size(18.dp)
-                                )
+                                // Previous Folder Button
+                                IconButton(
+                                    onClick = { 
+                                        activeContextItem = null
+                                        viewModel.previousFolder() 
+                                    },
+                                    enabled = folders.size > 1,
+                                    modifier = Modifier.size(32.dp)
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.AutoMirrored.Filled.ArrowBack,
+                                        contentDescription = "Previous Folder",
+                                        tint = if (folders.size > 1) MaterialTheme.colorScheme.onPrimaryContainer else MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.3f),
+                                        modifier = Modifier.size(18.dp)
+                                    )
+                                }
+
+                                // Current Folder Title & Index Indicator
+                                Column(
+                                    horizontalAlignment = Alignment.CenterHorizontally,
+                                    modifier = Modifier
+                                        .weight(1f)
+                                        .clickable {
+                                            if (folders.size > 1) {
+                                                viewModel.nextFolder()
+                                            }
+                                        }
+                                ) {
+                                    Row(
+                                        verticalAlignment = Alignment.CenterVertically,
+                                        horizontalArrangement = Arrangement.spacedBy(4.dp)
+                                    ) {
+                                        val isPinnedFolder = currentFolder?.isSpecialPinned == true
+                                        Icon(
+                                            imageVector = if (isPinnedFolder) Icons.Default.Star else Icons.Default.Folder,
+                                            contentDescription = null,
+                                            tint = if (isPinnedFolder) Color(0xFFF59E0B) else MaterialTheme.colorScheme.primary,
+                                            modifier = Modifier.size(16.dp)
+                                        )
+                                        Text(
+                                            text = currentFolder?.name ?: "Media",
+                                            style = MaterialTheme.typography.titleSmall,
+                                            fontWeight = FontWeight.Bold,
+                                            maxLines = 1,
+                                            overflow = TextOverflow.Ellipsis
+                                        )
+                                    }
+                                    if (folders.isNotEmpty()) {
+                                        Text(
+                                            text = "${currentFolderIndex + 1}/${folders.size}",
+                                            style = MaterialTheme.typography.labelSmall,
+                                            color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.75f)
+                                        )
+                                    }
+                                }
+
+                                // Search Toggle Button
+                                IconButton(
+                                    onClick = { 
+                                        isSearchOpen = !isSearchOpen
+                                        if (!isSearchOpen) searchQuery = ""
+                                    },
+                                    modifier = Modifier.size(32.dp)
+                                ) {
+                                    Icon(
+                                        imageVector = if (isSearchOpen) Icons.Default.Close else Icons.Default.Search,
+                                        contentDescription = "Search Tags",
+                                        tint = if (searchQuery.isNotEmpty()) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onPrimaryContainer,
+                                        modifier = Modifier.size(18.dp)
+                                    )
+                                }
+
+                                // Next Folder Button
+                                IconButton(
+                                    onClick = { 
+                                        activeContextItem = null
+                                        viewModel.nextFolder() 
+                                    },
+                                    enabled = folders.size > 1,
+                                    modifier = Modifier.size(32.dp)
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.AutoMirrored.Filled.ArrowForward,
+                                        contentDescription = "Next Folder",
+                                        tint = if (folders.size > 1) MaterialTheme.colorScheme.onPrimaryContainer else MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.3f),
+                                        modifier = Modifier.size(18.dp)
+                                    )
+                                }
                             }
 
-                            // Current Folder Title & Index Indicator
-                            Column(
-                                horizontalAlignment = Alignment.CenterHorizontally,
-                                modifier = Modifier
-                                    .weight(1f)
-                                    .clickable {
-                                        if (folders.size > 1) {
-                                            viewModel.nextFolder()
+                            // Quick Search Input Bar
+                            AnimatedVisibility(visible = isSearchOpen) {
+                                Box(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .padding(horizontal = 8.dp, vertical = 4.dp)
+                                        .clip(RoundedCornerShape(8.dp))
+                                        .background(MaterialTheme.colorScheme.surface.copy(alpha = 0.95f))
+                                        .padding(horizontal = 8.dp, vertical = 6.dp)
+                                ) {
+                                    Row(
+                                        verticalAlignment = Alignment.CenterVertically,
+                                        modifier = Modifier.fillMaxWidth()
+                                    ) {
+                                        Icon(
+                                            imageVector = Icons.Default.Search,
+                                            contentDescription = null,
+                                            tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                                            modifier = Modifier.size(16.dp)
+                                        )
+                                        Spacer(modifier = Modifier.width(6.dp))
+                                        androidx.compose.foundation.text.BasicTextField(
+                                            value = searchQuery,
+                                            onValueChange = { searchQuery = it },
+                                            singleLine = true,
+                                            textStyle = MaterialTheme.typography.bodySmall.copy(color = MaterialTheme.colorScheme.onSurface),
+                                            modifier = Modifier
+                                                .weight(1f)
+                                                .focusRequester(searchFocusRequester),
+                                            decorationBox = { innerTextField ->
+                                                if (searchQuery.isEmpty()) {
+                                                    Text(
+                                                        text = "Filter tags (e.g. cat, meme)...",
+                                                        style = MaterialTheme.typography.bodySmall,
+                                                        color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f)
+                                                    )
+                                                }
+                                                innerTextField()
+                                            }
+                                        )
+                                        if (searchQuery.isNotEmpty()) {
+                                            Icon(
+                                                imageVector = Icons.Default.Close,
+                                                contentDescription = "Clear",
+                                                tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                                                modifier = Modifier
+                                                    .size(16.dp)
+                                                    .clickable { searchQuery = "" }
+                                            )
                                         }
                                     }
-                            ) {
-                                Row(
-                                    verticalAlignment = Alignment.CenterVertically,
-                                    horizontalArrangement = Arrangement.spacedBy(4.dp)
-                                ) {
-                                    val isPinnedFolder = currentFolder?.isSpecialPinned == true
-                                    Icon(
-                                        imageVector = if (isPinnedFolder) Icons.Default.Star else Icons.Default.Folder,
-                                        contentDescription = null,
-                                        tint = if (isPinnedFolder) Color(0xFFF59E0B) else MaterialTheme.colorScheme.primary,
-                                        modifier = Modifier.size(16.dp)
-                                    )
-                                    Text(
-                                        text = currentFolder?.name ?: "Media",
-                                        style = MaterialTheme.typography.titleSmall,
-                                        fontWeight = FontWeight.Bold,
-                                        maxLines = 1,
-                                        overflow = TextOverflow.Ellipsis
-                                    )
                                 }
-                                if (folders.isNotEmpty()) {
-                                    Text(
-                                        text = "${currentFolderIndex + 1}/${folders.size}",
-                                        style = MaterialTheme.typography.labelSmall,
-                                        color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.75f)
-                                    )
-                                }
-                            }
-
-                            // Next Folder Button
-                            IconButton(
-                                onClick = { 
-                                    activeContextItem = null
-                                    viewModel.nextFolder() 
-                                },
-                                enabled = folders.size > 1,
-                                modifier = Modifier.size(32.dp)
-                            ) {
-                                Icon(
-                                    imageVector = Icons.AutoMirrored.Filled.ArrowForward,
-                                    contentDescription = "Next Folder",
-                                    tint = if (folders.size > 1) MaterialTheme.colorScheme.onPrimaryContainer else MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.3f),
-                                    modifier = Modifier.size(18.dp)
-                                )
                             }
                         }
                     }
 
                     // 2. Media Grid with Horizontal Swipe Navigation between Folders
+                    val filteredImages = remember(images, searchQuery) {
+                        if (searchQuery.isBlank()) {
+                            images
+                        } else {
+                            val terms = searchQuery.split(",")
+                                .map { it.trim().lowercase() }
+                                .filter { it.isNotEmpty() }
+                            if (terms.isEmpty()) {
+                                images
+                            } else {
+                                images.filter { item ->
+                                    val itemTags = item.tags.map { it.lowercase() }
+                                    val itemName = item.name.lowercase()
+                                    terms.all { term ->
+                                        itemTags.any { tag -> tag.contains(term) } || itemName.contains(term)
+                                    }
+                                }
+                            }
+                        }
+                    }
+
                     Box(
                         modifier = Modifier
                             .weight(1f)
@@ -730,20 +854,20 @@ fun OverlayContent(
                             Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                                 CircularProgressIndicator(color = MaterialTheme.colorScheme.primary)
                             }
-                        } else if (images.isEmpty()) {
+                        } else if (filteredImages.isEmpty()) {
                             Box(modifier = Modifier.fillMaxSize().padding(16.dp), contentAlignment = Alignment.Center) {
                                 Column(
                                     horizontalAlignment = Alignment.CenterHorizontally,
                                     verticalArrangement = Arrangement.spacedBy(8.dp)
                                 ) {
                                     Icon(
-                                        imageVector = if (currentFolder?.isSpecialPinned == true) Icons.Default.BookmarkBorder else Icons.Default.PhotoLibrary,
+                                        imageVector = if (searchQuery.isNotEmpty()) Icons.Default.Search else if (currentFolder?.isSpecialPinned == true) Icons.Default.BookmarkBorder else Icons.Default.PhotoLibrary,
                                         contentDescription = null,
                                         tint = MaterialTheme.colorScheme.onSurfaceVariant,
                                         modifier = Modifier.size(40.dp)
                                     )
                                     Text(
-                                        text = if (currentFolder?.isSpecialPinned == true) "No pinned media yet.\nLong-press any media to pin it here!" else "No media in this folder",
+                                        text = if (searchQuery.isNotEmpty()) "No media matching \"$searchQuery\"" else if (currentFolder?.isSpecialPinned == true) "No pinned media yet.\nLong-press any media to pin it here!" else "No media in this folder",
                                         style = MaterialTheme.typography.bodySmall,
                                         textAlign = TextAlign.Center,
                                         color = MaterialTheme.colorScheme.onSurfaceVariant
@@ -757,7 +881,7 @@ fun OverlayContent(
                                 contentPadding = PaddingValues(4.dp),
                                 modifier = Modifier.fillMaxSize()
                             ) {
-                                items(images, key = { it.uri.toString() }) { item ->
+                                items(filteredImages, key = { it.uri.toString() }) { item ->
                                     Box(
                                         modifier = Modifier
                                             .padding(3.dp)
@@ -841,179 +965,6 @@ fun OverlayContent(
                                 }
                             }
                         }
-
-                        // Floating Context Action Bar on Long Press
-                        if (activeContextItem != null) {
-                            val selectedItem = activeContextItem!!
-                            Box(
-                                modifier = Modifier
-                                    .align(Alignment.BottomCenter)
-                                    .padding(bottom = 8.dp)
-                            ) {
-                                Surface(
-                                    shape = RoundedCornerShape(24.dp),
-                                    color = MaterialTheme.colorScheme.inverseSurface,
-                                    contentColor = MaterialTheme.colorScheme.inverseOnSurface,
-                                    shadowElevation = 8.dp,
-                                    modifier = Modifier.padding(horizontal = 8.dp)
-                                ) {
-                                    Row(
-                                        modifier = Modifier.padding(horizontal = 6.dp, vertical = 4.dp),
-                                        verticalAlignment = Alignment.CenterVertically,
-                                        horizontalArrangement = Arrangement.spacedBy(2.dp)
-                                    ) {
-                                        // 1. Pin / Unpin Action
-                                        IconButton(
-                                            onClick = {
-                                                viewModel.togglePin(selectedItem)
-                                                activeContextItem = null
-                                            },
-                                            modifier = Modifier.size(38.dp)
-                                        ) {
-                                            Icon(
-                                                imageVector = Icons.Default.PushPin,
-                                                contentDescription = if (selectedItem.isPinned) "Unpin" else "Pin",
-                                                tint = if (selectedItem.isPinned) Color(0xFFF59E0B) else MaterialTheme.colorScheme.inverseOnSurface,
-                                                modifier = Modifier.size(18.dp)
-                                            )
-                                        }
-
-                                        // 2. Share Action
-                                        IconButton(
-                                            onClick = {
-                                                ClipboardUtils.shareMedia(context, selectedItem.uri)
-                                                activeContextItem = null
-                                                toggleExpand(false)
-                                            },
-                                            modifier = Modifier.size(38.dp)
-                                        ) {
-                                            Icon(
-                                                imageVector = Icons.Default.Share,
-                                                contentDescription = "Share",
-                                                tint = MaterialTheme.colorScheme.inverseOnSurface,
-                                                modifier = Modifier.size(18.dp)
-                                            )
-                                        }
-
-                                        // 3. Open Action
-                                        IconButton(
-                                            onClick = {
-                                                ClipboardUtils.openMedia(context, selectedItem.uri)
-                                                activeContextItem = null
-                                                toggleExpand(false)
-                                            },
-                                            modifier = Modifier.size(38.dp)
-                                        ) {
-                                            Icon(
-                                                imageVector = Icons.AutoMirrored.Filled.OpenInNew,
-                                                contentDescription = "Open in Viewer",
-                                                tint = MaterialTheme.colorScheme.inverseOnSurface,
-                                                modifier = Modifier.size(18.dp)
-                                            )
-                                        }
-
-                                        // 4. Delete Action (Triggers Confirmation)
-                                        IconButton(
-                                            onClick = {
-                                                itemToDeleteConfirm = selectedItem
-                                                activeContextItem = null
-                                            },
-                                            modifier = Modifier.size(38.dp)
-                                        ) {
-                                            Icon(
-                                                imageVector = Icons.Default.Delete,
-                                                contentDescription = "Delete",
-                                                tint = MaterialTheme.colorScheme.error,
-                                                modifier = Modifier.size(18.dp)
-                                            )
-                                        }
-
-                                        // 5. Close Context Bar
-                                        IconButton(
-                                            onClick = { activeContextItem = null },
-                                            modifier = Modifier.size(32.dp)
-                                        ) {
-                                            Icon(
-                                                imageVector = Icons.Default.Close,
-                                                contentDescription = "Cancel",
-                                                tint = MaterialTheme.colorScheme.inverseOnSurface.copy(alpha = 0.6f),
-                                                modifier = Modifier.size(16.dp)
-                                            )
-                                        }
-                                    }
-                                }
-                            }
-                        }
-
-                        // Delete Confirmation Card Overlay
-                        if (itemToDeleteConfirm != null) {
-                            val deletingItem = itemToDeleteConfirm!!
-                            Box(
-                                modifier = Modifier
-                                    .fillMaxSize()
-                                    .background(Color.Black.copy(alpha = 0.6f))
-                                    .clickable { itemToDeleteConfirm = null },
-                                contentAlignment = Alignment.Center
-                            ) {
-                                Card(
-                                    modifier = Modifier
-                                        .padding(12.dp)
-                                        .fillMaxWidth(0.95f)
-                                        .clickable(enabled = false) {},
-                                    shape = RoundedCornerShape(16.dp),
-                                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)
-                                ) {
-                                    Column(
-                                        modifier = Modifier.padding(14.dp),
-                                        horizontalAlignment = Alignment.CenterHorizontally,
-                                        verticalArrangement = Arrangement.spacedBy(10.dp)
-                                    ) {
-                                        Icon(
-                                            imageVector = Icons.Default.Warning,
-                                            contentDescription = null,
-                                            tint = MaterialTheme.colorScheme.error,
-                                            modifier = Modifier.size(28.dp)
-                                        )
-                                        Text(
-                                            text = "Delete File?",
-                                            style = MaterialTheme.typography.titleMedium,
-                                            fontWeight = FontWeight.Bold
-                                        )
-                                        Text(
-                                            text = "Are you sure you want to delete \"${deletingItem.name}\"? This action cannot be undone.",
-                                            style = MaterialTheme.typography.bodySmall,
-                                            textAlign = TextAlign.Center,
-                                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                            maxLines = 3,
-                                            overflow = TextOverflow.Ellipsis
-                                        )
-                                        Column(
-                                            modifier = Modifier.fillMaxWidth(),
-                                            verticalArrangement = Arrangement.spacedBy(6.dp)
-                                        ) {
-                                            Button(
-                                                onClick = {
-                                                    viewModel.deleteItem(context, deletingItem)
-                                                    itemToDeleteConfirm = null
-                                                },
-                                                colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error),
-                                                contentPadding = PaddingValues(horizontal = 12.dp, vertical = 8.dp),
-                                                modifier = Modifier.fillMaxWidth()
-                                            ) {
-                                                Text("Delete File", fontWeight = FontWeight.Bold)
-                                            }
-                                            OutlinedButton(
-                                                onClick = { itemToDeleteConfirm = null },
-                                                contentPadding = PaddingValues(horizontal = 12.dp, vertical = 8.dp),
-                                                modifier = Modifier.fillMaxWidth()
-                                            ) {
-                                                Text("Cancel")
-                                            }
-                                        }
-                                    }
-                                }
-                            }
-                        }
                     }
 
                     // 3. Bottom Action Bar (+, Refresh, Close)
@@ -1062,6 +1013,227 @@ fun OverlayContent(
                         }
                     }
                 }
+            }
+
+            // =========================================================================
+            // FULL-CANVAS FLOATING OVERLAYS & MODALS (OUTSIDE NARROW SIDEBAR BOUNDARY)
+            // =========================================================================
+
+            // 1. Floating Context Action Bar on Long Press (Centered across full screen)
+            if (activeContextItem != null) {
+                val selectedItem = activeContextItem!!
+                Box(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .padding(bottom = 24.dp, start = 16.dp, end = 16.dp),
+                    contentAlignment = Alignment.BottomCenter
+                ) {
+                    Surface(
+                        shape = RoundedCornerShape(28.dp),
+                        color = MaterialTheme.colorScheme.inverseSurface,
+                        contentColor = MaterialTheme.colorScheme.inverseOnSurface,
+                        shadowElevation = 12.dp,
+                        tonalElevation = 6.dp,
+                        modifier = Modifier
+                            .widthIn(max = 480.dp)
+                            .fillMaxWidth(0.95f)
+                            .clickable(
+                                interactionSource = remember { androidx.compose.foundation.interaction.MutableInteractionSource() },
+                                indication = null
+                            ) {}
+                    ) {
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(horizontal = 8.dp, vertical = 6.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.SpaceEvenly
+                        ) {
+                            // 1. Pin / Unpin Action
+                            IconButton(
+                                onClick = {
+                                    viewModel.togglePin(selectedItem)
+                                    activeContextItem = null
+                                },
+                                modifier = Modifier.size(44.dp)
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.PushPin,
+                                    contentDescription = if (selectedItem.isPinned) "Unpin" else "Pin",
+                                    tint = if (selectedItem.isPinned) Color(0xFFF59E0B) else MaterialTheme.colorScheme.inverseOnSurface,
+                                    modifier = Modifier.size(20.dp)
+                                )
+                            }
+
+                            // 2. Tag Edit Action (Spacious Dialog)
+                            IconButton(
+                                onClick = {
+                                    itemToEditTags = selectedItem
+                                    activeContextItem = null
+                                },
+                                modifier = Modifier.size(44.dp)
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.Label,
+                                    contentDescription = "Edit Tags",
+                                    tint = MaterialTheme.colorScheme.inverseOnSurface,
+                                    modifier = Modifier.size(20.dp)
+                                )
+                            }
+
+                            // 3. Share Action
+                            IconButton(
+                                onClick = {
+                                    ClipboardUtils.shareMedia(context, selectedItem.uri)
+                                    activeContextItem = null
+                                    toggleExpand(false)
+                                },
+                                modifier = Modifier.size(44.dp)
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.Share,
+                                    contentDescription = "Share",
+                                    tint = MaterialTheme.colorScheme.inverseOnSurface,
+                                    modifier = Modifier.size(20.dp)
+                                )
+                            }
+
+                            // 4. Open Action
+                            IconButton(
+                                onClick = {
+                                    ClipboardUtils.openMedia(context, selectedItem.uri)
+                                    activeContextItem = null
+                                    toggleExpand(false)
+                                },
+                                modifier = Modifier.size(44.dp)
+                            ) {
+                                Icon(
+                                    imageVector = Icons.AutoMirrored.Filled.OpenInNew,
+                                    contentDescription = "Open in Viewer",
+                                    tint = MaterialTheme.colorScheme.inverseOnSurface,
+                                    modifier = Modifier.size(20.dp)
+                                )
+                            }
+
+                            // 5. Delete Action (Triggers Confirmation)
+                            IconButton(
+                                onClick = {
+                                    itemToDeleteConfirm = selectedItem
+                                    activeContextItem = null
+                                },
+                                modifier = Modifier.size(44.dp)
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.Delete,
+                                    contentDescription = "Delete",
+                                    tint = MaterialTheme.colorScheme.error,
+                                    modifier = Modifier.size(20.dp)
+                                )
+                            }
+
+                            // 6. Close Context Bar
+                            IconButton(
+                                onClick = { activeContextItem = null },
+                                modifier = Modifier.size(36.dp)
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.Close,
+                                    contentDescription = "Cancel",
+                                    tint = MaterialTheme.colorScheme.inverseOnSurface.copy(alpha = 0.6f),
+                                    modifier = Modifier.size(18.dp)
+                                )
+                            }
+                        }
+                    }
+                }
+            }
+
+            // 2. Delete Confirmation Card Overlay (Full Screen Centered)
+            if (itemToDeleteConfirm != null) {
+                val deletingItem = itemToDeleteConfirm!!
+                Box(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .background(Color.Black.copy(alpha = 0.65f))
+                        .clickable(
+                            interactionSource = remember { androidx.compose.foundation.interaction.MutableInteractionSource() },
+                            indication = null
+                        ) { itemToDeleteConfirm = null },
+                    contentAlignment = Alignment.Center
+                ) {
+                    Card(
+                        modifier = Modifier
+                            .widthIn(max = 400.dp)
+                            .fillMaxWidth(0.90f)
+                            .padding(16.dp)
+                            .clickable(
+                                interactionSource = remember { androidx.compose.foundation.interaction.MutableInteractionSource() },
+                                indication = null
+                            ) {},
+                        shape = RoundedCornerShape(20.dp),
+                        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+                        elevation = CardDefaults.cardElevation(defaultElevation = 10.dp)
+                    ) {
+                        Column(
+                            modifier = Modifier.padding(20.dp),
+                            horizontalAlignment = Alignment.CenterHorizontally,
+                            verticalArrangement = Arrangement.spacedBy(14.dp)
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.Warning,
+                                contentDescription = null,
+                                tint = MaterialTheme.colorScheme.error,
+                                modifier = Modifier.size(36.dp)
+                            )
+                            Text(
+                                text = "Delete File?",
+                                style = MaterialTheme.typography.titleLarge,
+                                fontWeight = FontWeight.Bold
+                            )
+                            Text(
+                                text = "Are you sure you want to delete \"${deletingItem.name}\"? This action cannot be undone.",
+                                style = MaterialTheme.typography.bodyMedium,
+                                textAlign = TextAlign.Center,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                maxLines = 3,
+                                overflow = TextOverflow.Ellipsis
+                            )
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.spacedBy(10.dp)
+                            ) {
+                                OutlinedButton(
+                                    onClick = { itemToDeleteConfirm = null },
+                                    modifier = Modifier.weight(1f)
+                                ) {
+                                    Text("Cancel")
+                                }
+                                Button(
+                                    onClick = {
+                                        viewModel.deleteItem(context, deletingItem)
+                                        itemToDeleteConfirm = null
+                                    },
+                                    colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error),
+                                    modifier = Modifier.weight(1f)
+                                ) {
+                                    Text("Delete", fontWeight = FontWeight.Bold)
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+            // 3. Tag Edit Dialog Overlay (Full Screen Centered)
+            if (itemToEditTags != null) {
+                TagEditDialog(
+                    item = itemToEditTags!!,
+                    onDismiss = { itemToEditTags = null },
+                    onSaveTags = { newTags ->
+                        viewModel.setItemTags(itemToEditTags!!, newTags)
+                        itemToEditTags = null
+                    }
+                )
             }
         }
     }

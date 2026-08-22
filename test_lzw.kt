@@ -1,0 +1,3 @@
+class LZWEncoder(private val initCodeSize: Int, private val pixels: ByteArray) {
+    // ...
+}

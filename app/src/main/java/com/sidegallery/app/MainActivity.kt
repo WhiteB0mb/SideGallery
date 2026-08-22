@@ -151,6 +151,15 @@ class MainActivity : ComponentActivity() {
 
     private val viewModel: MainViewModel by viewModels()
     private var pendingFolderForMediaImport: GalleryFolder? = null
+    private var pendingTrimVideoUri by mutableStateOf<Uri?>(null)
+    private var pendingTrimFolder by mutableStateOf<GalleryFolder?>(null)
+
+    private fun isVideoUri(uri: Uri): Boolean {
+        val mime = contentResolver.getType(uri)
+        return mime?.startsWith("video/") == true || uri.toString().lowercase().let {
+            it.endsWith(".mp4") || it.endsWith(".webm") || it.endsWith(".mkv") || it.endsWith(".mov") || it.endsWith(".3gp")
+        }
+    }
 
     private val folderPicker = registerForActivityResult(ActivityResultContracts.OpenDocumentTree()) { uri ->
         if (uri != null) {
@@ -162,9 +171,36 @@ class MainActivity : ComponentActivity() {
     private val mediaPicker = registerForActivityResult(ActivityResultContracts.PickMultipleVisualMedia()) { uris ->
         if (uris.isNotEmpty()) {
             val target = pendingFolderForMediaImport
-            viewModel.importMedia(this, uris, target)
-            Toast.makeText(this, "Importing ${uris.size} file(s)...", Toast.LENGTH_SHORT).show()
+            if (uris.size == 1 && isVideoUri(uris.first())) {
+                pendingTrimVideoUri = uris.first()
+                pendingTrimFolder = target
+            } else {
+                viewModel.importMedia(this, uris, target)
+                Toast.makeText(this, "Importing ${uris.size} file(s)...", Toast.LENGTH_SHORT).show()
+            }
             pendingFolderForMediaImport = null
+        }
+    }
+
+    private val exportSettingsLauncher = registerForActivityResult(ActivityResultContracts.CreateDocument("application/json")) { uri ->
+        if (uri != null) {
+            val success = viewModel.exportSettingsToUri(this, uri)
+            if (success) {
+                Toast.makeText(this, "Configuration exported successfully!", Toast.LENGTH_LONG).show()
+            } else {
+                Toast.makeText(this, "Export failed. Please check file permissions.", Toast.LENGTH_LONG).show()
+            }
+        }
+    }
+
+    private val importSettingsLauncher = registerForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
+        if (uri != null) {
+            val success = viewModel.importSettingsFromUri(this, uri)
+            if (success) {
+                Toast.makeText(this, "Settings & Folders restored successfully!", Toast.LENGTH_LONG).show()
+            } else {
+                Toast.makeText(this, "Import failed. Invalid or corrupted JSON backup.", Toast.LENGTH_LONG).show()
+            }
         }
     }
 
@@ -328,6 +364,12 @@ class MainActivity : ComponentActivity() {
                                 onOpenPreviewSimulator = {
                                     inAppSimulatorOpen = true
                                 },
+                                onExportSettings = {
+                                    exportSettingsLauncher.launch("sidegallery_backup.json")
+                                },
+                                onImportSettings = {
+                                    importSettingsLauncher.launch(arrayOf("application/json", "*/*"))
+                                },
                                 canDrawOverlays = canDrawOverlays,
                                 onCheckPermission = {
                                     canDrawOverlays = Settings.canDrawOverlays(this@MainActivity)
@@ -346,6 +388,30 @@ class MainActivity : ComponentActivity() {
                             mediaPicker.launch(androidx.activity.result.PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageAndVideo))
                         }
                     )
+
+                    // Video Trimmer Dialog when picking a video in MainActivity
+                    pendingTrimVideoUri?.let { videoUri ->
+                        VideoTrimmerDialog(
+                            videoUri = videoUri,
+                            onDismiss = {
+                                pendingTrimVideoUri = null
+                                pendingTrimFolder = null
+                            },
+                            onConfirmTrim = { startMs, endMs ->
+                                val target = pendingTrimFolder
+                                pendingTrimVideoUri = null
+                                pendingTrimFolder = null
+                                Toast.makeText(this@MainActivity, "Processing video to animated GIF...", Toast.LENGTH_SHORT).show()
+                                viewModel.importVideoWithTrim(
+                                    context = this@MainActivity,
+                                    uri = videoUri,
+                                    startMs = startMs,
+                                    endMs = endMs,
+                                    targetFolder = target
+                                )
+                            }
+                        )
+                    }
                 }
             }
         }
@@ -927,6 +993,8 @@ fun MainScreen(
     onToggleService: (Boolean) -> Unit,
     onOpenGuide: () -> Unit,
     onOpenPreviewSimulator: () -> Unit,
+    onExportSettings: () -> Unit = {},
+    onImportSettings: () -> Unit = {},
     canDrawOverlays: Boolean,
     onCheckPermission: () -> Unit
 ) {
@@ -1425,6 +1493,41 @@ fun MainScreen(
                         text = if (isIgnoringBatteryOptimizations) "✓ Optimal" else "Restricted",
                         isPositive = isIgnoringBatteryOptimizations
                     )
+                }
+            }
+        }
+
+        // 5. Backup & Restore Configuration (.json)
+        Card(modifier = Modifier.fillMaxWidth()) {
+            Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                Text("5. Backup & Restore Configuration (.json)", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+                Text(
+                    "Export your settings, folder connections, panel dimensions, and custom tags into a portable JSON backup file, or restore them anytime.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(10.dp)
+                ) {
+                    OutlinedButton(
+                        onClick = onExportSettings,
+                        modifier = Modifier.weight(1f)
+                    ) {
+                        Icon(Icons.Default.Storage, contentDescription = null, modifier = Modifier.size(16.dp))
+                        Spacer(Modifier.width(6.dp))
+                        Text("Export (.json)")
+                    }
+
+                    Button(
+                        onClick = onImportSettings,
+                        modifier = Modifier.weight(1f)
+                    ) {
+                        Icon(Icons.Default.Refresh, contentDescription = null, modifier = Modifier.size(16.dp))
+                        Spacer(Modifier.width(6.dp))
+                        Text("Import (.json)")
+                    }
                 }
             }
         }

@@ -3,7 +3,16 @@ package com.example
 import android.app.Application
 import android.content.Context
 import androidx.test.core.app.ApplicationProvider
+import com.sidegallery.app.GalleryFolder
+import com.sidegallery.app.GalleryItem
+import com.sidegallery.app.MainViewModel
+import com.sidegallery.app.PanelSide
+import com.sidegallery.app.PanelWidth
 import com.sidegallery.app.R
+import com.sidegallery.app.ScrollDirection
+import com.sidegallery.app.SortOption
+import com.sidegallery.app.ThemeMode
+import com.sidegallery.app.TriggerType
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
